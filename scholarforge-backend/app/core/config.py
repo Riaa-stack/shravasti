@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
+from sqlalchemy.engine import URL
+
 
 class Settings(BaseSettings):
     # App
@@ -15,14 +16,16 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgres"
 
+    # Redis / Celery
+    REDIS_URL: str = "redis://redis:6379/0"
 
     # ChromaDB
     CHROMA_PERSIST_DIR: str = "/data/chroma"
 
-
     # OpenRouter (LLM)
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+
     LLM_MODEL_LITERATURE_REVIEW: str = "deepseek/deepseek-chat"
     LLM_MODEL_METHODOLOGY: str = "deepseek/deepseek-chat"
     LLM_MODEL_GAP: str = "deepseek/deepseek-r1"
@@ -55,8 +58,26 @@ class Settings(BaseSettings):
 
     @property
     def DATABASE_URL(self) -> str:
-        return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        """
+        Build the PostgreSQL URL safely.
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+        SQLAlchemy URL.create() handles special characters
+        in the PostgreSQL username/password correctly.
+        """
+        return URL.create(
+            drivername="postgresql+asyncpg",
+            username=self.POSTGRES_USER,
+            password=self.POSTGRES_PASSWORD,
+            host=self.POSTGRES_HOST,
+            port=self.POSTGRES_PORT,
+            database=self.POSTGRES_DB,
+        ).render_as_string(hide_password=False)
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
 
 settings = Settings()
