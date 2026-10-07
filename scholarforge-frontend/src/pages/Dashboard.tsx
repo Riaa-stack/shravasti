@@ -69,17 +69,17 @@ export function Dashboard() {
     <div className="space-y-8 animate-fade-in pb-12">
       <div>
         <h1 className="text-3xl font-display font-bold tracking-tight">
-          Welcome back, {user?.full_name?.split(' ')[0] || 'Researcher'}
+          Welcome back, {user?.name?.split(' ')[0] || 'User'}
         </h1>
         <p className="text-muted-foreground mt-1">Here is the overview of your research workspace.</p>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
         {[
-          { title: 'Total Papers', value: stats?.total_papers || 12, icon: FileText, color: 'text-blue-500', bg: 'bg-blue-500/10' },
-          { title: 'Processed', value: stats?.processed_papers || 10, icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
-          { title: 'Processing', value: stats?.processing_papers || 2, icon: Clock, color: 'text-amber-500', bg: 'bg-amber-500/10' },
-          { title: 'AI Insights', value: stats?.total_insights || 48, icon: Sparkles, color: 'text-purple-500', bg: 'bg-purple-500/10' },
+          { title: 'Total Papers', value: stats?.total_papers || 0, icon: FileText, color: 'text-blue-500', bg: 'bg-blue-500/10' },
+          { title: 'Processed', value: stats?.processed_papers || 0, icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+          { title: 'Processing', value: stats?.processing_papers || 0, icon: Clock, color: 'text-amber-500', bg: 'bg-amber-500/10' },
+          { title: 'AI Insights', value: stats?.total_insights || 0, icon: Sparkles, color: 'text-purple-500', bg: 'bg-purple-500/10' },
         ].map((stat, i) => (
           <div key={i} className="rounded-xl border border-border/50 bg-card/40 backdrop-blur-sm p-6 hover:-translate-y-1 transition-transform duration-300">
             <div className="flex items-center gap-4">

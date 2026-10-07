@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     LLM_MODEL_GAP: str = "deepseek/deepseek-r1"
     LLM_MODEL_TREND: str = "qwen/qwen-2.5-72b-instruct"
     LLM_MODEL_IDEA: str = "deepseek/deepseek-r1"
-    LLM_MODEL_CITATION: str = "mistralai/mistral-small"
+    LLM_MODEL_CITATION: str = "deepseek/deepseek-chat"
     LLM_MODEL_CHAT: str = "deepseek/deepseek-chat"
     LLM_MODEL_DIFFICULTY: str = "google/gemma-3-27b-it"
 

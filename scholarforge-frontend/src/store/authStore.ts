@@ -4,7 +4,7 @@ import { persist } from 'zustand/middleware';
 interface User {
   id: string;
   email: string;
-  full_name: string;
+  name: string;
   role: 'student' | 'researcher' | 'academician' | 'admin';
 }
 
@@ -23,9 +23,21 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       accessToken: null,
       refreshToken: null,
+
       setUser: (user) => set({ user }),
-      setTokens: (access, refresh) => set({ accessToken: access, refreshToken: refresh }),
-      logout: () => set({ user: null, accessToken: null, refreshToken: null }),
+
+      setTokens: (access, refresh) =>
+        set({
+          accessToken: access,
+          refreshToken: refresh,
+        }),
+
+      logout: () =>
+        set({
+          user: null,
+          accessToken: null,
+          refreshToken: null,
+        }),
     }),
     {
       name: 'scholarforge-auth',
