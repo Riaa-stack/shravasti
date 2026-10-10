@@ -592,11 +592,11 @@ async def detect_research_gap(
 
     except Exception as e:
         await session.rollback()
-
-        logger.warning(
-            "Could not save research gap to DB: %s",
-            e
-        )
+        logger.exception("Failed to save research gap results to database.")
+        raise HTTPException(
+            status_code=500,
+            detail="Research gap analysis completed, but saving the result failed."
+        ) from e
 
     return {
         "result": result
@@ -929,272 +929,6 @@ async def generate_ideas(
 # ============================================================================
 # CITATION
 # ============================================================================
-# ============================================================================
-# CITATION
-# ============================================================================
-
-def _normalize_authors(authors: Any) -> list[str]:
-    """
-    Convert the paper authors field into a clean list of author names.
-    """
-    if not authors:
-        return []
-
-    if isinstance(authors, str):
-        return [authors.strip()] if authors.strip() else []
-
-    if isinstance(authors, list):
-        return [
-            str(author).strip()
-            for author in authors
-            if str(author).strip()
-        ]
-
-    return [str(authors).strip()]
-
-
-def _author_initials(author: str) -> str:
-    """
-    John Michael Smith -> J. M. Smith
-    """
-    parts = author.strip().split()
-
-    if len(parts) <= 1:
-        return author.strip()
-
-    last_name = parts[-1]
-
-    initials = " ".join(
-        f"{part[0].upper()}."
-        for part in parts[:-1]
-        if part
-    )
-
-    return f"{initials} {last_name}"
-
-
-def _apa_author(author: str) -> str:
-    """
-    John Michael Smith -> Smith, J. M.
-    """
-    parts = author.strip().split()
-
-    if len(parts) <= 1:
-        return author.strip()
-
-    last_name = parts[-1]
-
-    initials = " ".join(
-        f"{part[0].upper()}."
-        for part in parts[:-1]
-        if part
-    )
-
-    return f"{last_name}, {initials}"
-
-
-def _mla_author(author: str) -> str:
-    """
-    John Michael Smith -> Smith, John Michael
-    """
-    parts = author.strip().split()
-
-    if len(parts) <= 1:
-        return author.strip()
-
-    return f"{parts[-1]}, {' '.join(parts[:-1])}"
-
-
-def _build_citation_result(paper: Paper) -> dict[str, str]:
-    """
-    Generate IEEE, APA, MLA and Harvard citations directly from
-    PostgreSQL paper metadata.
-
-    No LLM call is required.
-    """
-
-    title = (paper.title or "").strip() or "Untitled"
-
-    venue = (paper.venue or "").strip() or "Unknown Venue"
-
-    year = (
-        str(paper.publication_year)
-        if paper.publication_year
-        else "n.d."
-    )
-
-    doi = (paper.doi or "").strip()
-
-    authors = _normalize_authors(paper.authors)
-
-    if not authors:
-        authors = ["Unknown Author"]
-
-    # ---------------------------------------------------------------
-    # IEEE
-    # ---------------------------------------------------------------
-
-    ieee_authors = ", ".join(
-        _author_initials(author)
-        for author in authors
-    )
-
-    ieee = (
-        f'{ieee_authors}, "{title}," '
-        f"{venue}, {year}."
-    )
-
-    if doi:
-        ieee += f" doi: {doi}"
-
-    # ---------------------------------------------------------------
-    # APA
-    # ---------------------------------------------------------------
-
-    apa_author_list = [
-        _apa_author(author)
-        for author in authors
-    ]
-
-    if len(apa_author_list) == 1:
-        apa_authors = apa_author_list[0]
-
-    elif len(apa_author_list) == 2:
-        apa_authors = (
-            f"{apa_author_list[0]}, & "
-            f"{apa_author_list[1]}"
-        )
-
-    else:
-        apa_authors = (
-            ", ".join(apa_author_list[:-1])
-            + f", & {apa_author_list[-1]}"
-        )
-
-    apa = (
-        f"{apa_authors}. "
-        f"({year}). "
-        f"{title}. "
-        f"{venue}."
-    )
-
-    if doi:
-        clean_doi = doi
-
-        if clean_doi.startswith("https://doi.org/"):
-            clean_doi = clean_doi[len("https://doi.org/"):]
-
-        elif clean_doi.startswith("http://doi.org/"):
-            clean_doi = clean_doi[len("http://doi.org/"):]
-
-        apa += f" https://doi.org/{clean_doi}"
-
-    # ---------------------------------------------------------------
-    # MLA
-    # ---------------------------------------------------------------
-
-    if len(authors) == 1:
-        mla_authors = _mla_author(authors[0])
-
-    elif len(authors) == 2:
-        mla_authors = (
-            f"{_mla_author(authors[0])}, "
-            f"and {authors[1]}"
-        )
-
-    else:
-        mla_authors = (
-            f"{_mla_author(authors[0])}, et al."
-        )
-
-    mla = (
-        f'{mla_authors}. "{title}." '
-        f"{venue}, {year}."
-    )
-
-    if doi:
-        mla += f" DOI: {doi}."
-
-    # ---------------------------------------------------------------
-    # Harvard
-    # ---------------------------------------------------------------
-
-    if len(authors) == 1:
-        harvard_authors = _apa_author(authors[0])
-
-    elif len(authors) == 2:
-        harvard_authors = (
-            f"{_apa_author(authors[0])} and "
-            f"{_apa_author(authors[1])}"
-        )
-
-    else:
-        harvard_authors = (
-            f"{_apa_author(authors[0])} et al."
-        )
-
-    harvard = (
-        f"{harvard_authors} "
-        f"({year}). "
-        f"{title}. "
-        f"{venue}."
-    )
-
-    if doi:
-        clean_doi = doi
-
-        if clean_doi.startswith("https://doi.org/"):
-            clean_doi = clean_doi[len("https://doi.org/"):]
-
-        elif clean_doi.startswith("http://doi.org/"):
-            clean_doi = clean_doi[len("http://doi.org/"):]
-
-        harvard += f" https://doi.org/{clean_doi}"
-
-    return {
-        "ieee": ieee,
-        "apa": apa,
-        "mla": mla,
-        "harvard": harvard,
-    }
-
-
-def _citation_is_valid(citations: dict[str, str]) -> bool:
-    """
-    Detect the old broken citation records.
-    """
-
-    if not citations:
-        return False
-
-    required_styles = {
-        "ieee",
-        "apa",
-        "mla",
-        "harvard",
-    }
-
-    if not required_styles.issubset(citations.keys()):
-        return False
-
-    bad_values = (
-        "Unknown Title",
-        "Unknown Venue",
-        "Unknown, \"Unknown Title",
-        "Unknown (n.d.). Unknown Title",
-        "Unknown. \"Unknown Title.\"",
-    )
-
-    for text in citations.values():
-        if not text:
-            return False
-
-        for bad_value in bad_values:
-            if bad_value in str(text):
-                return False
-
-    return True
-
 
 @router.get("/citation/result")
 async def get_citation_result(
@@ -1245,18 +979,6 @@ async def get_citation_result(
         if style not in citations:
             citations[style] = row.formatted_text
 
-    # ---------------------------------------------------------------
-    # IMPORTANT:
-    # Do not display old broken "Unknown" citations.
-    # Returning 404 makes the frontend call POST /citation.
-    # ---------------------------------------------------------------
-
-    if not _citation_is_valid(citations):
-        raise HTTPException(
-            status_code=404,
-            detail="Saved citations are invalid and need regeneration."
-        )
-
     return {
         "result": normalize_result(citations)
     }
@@ -1277,84 +999,92 @@ async def generate_citations(
         paper_ids
     )
 
-    if not paper_ids:
-        raise HTTPException(
-            status_code=400,
-            detail="At least one paper is required."
+    # ------------------------------------------------------------------------
+    # CHECK CACHE
+    # ------------------------------------------------------------------------
+
+    if paper_ids:
+        paper_uuid = uuid.UUID(paper_ids[0])
+
+        existing_result = await session.execute(
+            select(Citation)
+            .where(
+                Citation.paper_id == paper_uuid
+            )
+            .order_by(
+                Citation.created_at.desc()
+            )
         )
 
-    # ---------------------------------------------------------------
-    # CURRENT UI uses the first selected paper for citations.
-    # ---------------------------------------------------------------
+        existing_rows = existing_result.scalars().all()
 
-    paper_uuid = uuid.UUID(paper_ids[0])
+        if existing_rows:
+            citations = {}
 
-    paper_result = await session.execute(
-        select(Paper).where(
-            Paper.id == paper_uuid,
-            Paper.user_id == current_user.id
-        )
-    )
+            for row in existing_rows:
+                style = row.style.value
 
-    paper = paper_result.scalar_one_or_none()
+                if style not in citations:
+                    citations[style] = row.formatted_text
 
-    if not paper:
-        raise HTTPException(
-            status_code=404,
-            detail="Selected paper not found."
-        )
+            if citations:
+                return {
+                    "result": citations
+                }
 
-    # ---------------------------------------------------------------
-    # Generate directly from PostgreSQL metadata.
-    # NO LLM CALL.
-    # ---------------------------------------------------------------
+    # ------------------------------------------------------------------------
+    # RUN AGENT
+    # ------------------------------------------------------------------------
 
-    citations = _build_citation_result(paper)
-
-    # ---------------------------------------------------------------
-    # Delete old citations, including the broken Unknown citations.
-    # ---------------------------------------------------------------
-
-    existing_result = await session.execute(
-        select(Citation).where(
-            Citation.paper_id == paper_uuid
-        )
-    )
-
-    existing_rows = existing_result.scalars().all()
-
-    for existing in existing_rows:
-        await session.delete(existing)
-
-    await session.flush()
-
-    # ---------------------------------------------------------------
-    # Save fresh citations.
-    # ---------------------------------------------------------------
-
-    style_map = {
-        "ieee": CitationStyle.ieee,
-        "apa": CitationStyle.apa,
-        "mla": CitationStyle.mla,
-        "harvard": CitationStyle.harvard,
+    state = {
+        "user_id": str(current_user.id),
+        "paper_ids": paper_ids,
+        "task_type": "citation",
+        "query": None,
+        "chat_history": None,
+        "retrieved_chunks": [],
+        "result": {}
     }
 
-    for style, formatted_text in citations.items():
-
-        citation = Citation(
-            paper_id=paper_uuid,
-            style=style_map[style],
-            formatted_text=formatted_text
+    try:
+        final_state = await research_graph.ainvoke(state)
+    except Exception as e:
+        logger.exception("Citation agent failed.")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Agent execution failed: {str(e)}"
         )
 
-        session.add(citation)
+    result = normalize_result(final_state["result"])
 
-    await session.commit()
+    # ------------------------------------------------------------------------
+    # SAVE CITATIONS
+    # ------------------------------------------------------------------------
+
+    if paper_ids:
+        try:
+            for style, text in result.items():
+
+                citation = Citation(
+                    paper_id=uuid.UUID(paper_ids[0]),
+                    style=CitationStyle(style),
+                    formatted_text=str(text)
+                )
+
+                session.add(citation)
+
+            await session.commit()
+
+        except Exception as e:
+            await session.rollback()
+
+            logger.warning(
+                "Could not save citation to DB: %s",
+                e
+            )
 
     return {
-        "result": normalize_result(citations),
-        "paper_id": str(paper_uuid),
-        "paper_title": paper.title
+        "result": result
     }
 
 

@@ -20,7 +20,7 @@ def get_llm(
         temperature=temperature,
 
         # Keep this below the remaining OpenRouter credit limit.
-        max_tokens=5000,
+        max_tokens=3000,
 
         default_headers={
             "HTTP-Referer": "https://github.com/scholarforge/scholarforge",

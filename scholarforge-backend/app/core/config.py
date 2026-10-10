@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "scholarforge"
     POSTGRES_USER: str = "postgres"
-    POSTGRES_PASSWORD: str = "postgres"
+    POSTGRES_PASSWORD: str = "Riya@9359"
 
     # Redis / Celery
     REDIS_URL: str = "redis://redis:6379/0"
