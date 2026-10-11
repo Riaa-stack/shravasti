@@ -63,9 +63,24 @@ async def run_chat(state: ResearchState) -> dict:
     llm = get_llm(settings.LLM_MODEL_CHAT)
     
     # For chat, we can just use the standard invoke and return a string
-    result = await llm.ainvoke([HumanMessage(content=formatted_prompt)])
+    try:
+        result = await llm.ainvoke([HumanMessage(content=formatted_prompt)])
+        response_text = result.content
+    except Exception as e:
+        logger.error("Chat LLM invocation failed (e.g. credit limit or rate limit): %s", e)
+        if chunks:
+            response_text = (
+                f"**Note:** AI generation service is temporarily at its credit limit. "
+                f"Here are the most relevant findings extracted directly from your papers for query: *'{query}'*:\n\n"
+                + "\n\n".join([f"> {c['content'][:300]}..." for c in chunks[:3]])
+            )
+        else:
+            response_text = (
+                f"Could not generate an AI response for query: *'{query}'* because OpenRouter credits are currently depleted. "
+                "Please add credits at https://openrouter.ai/settings/credits or use a fresh API key."
+            )
     
     return {
-        "response": result.content,
+        "response": response_text,
         "sources": sources
     }

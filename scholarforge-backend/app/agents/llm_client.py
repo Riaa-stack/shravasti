@@ -92,10 +92,11 @@ def get_llm(
         fallbacks.append(_create_single_chat_model(k, model_name, temperature, max_tokens))
 
     # Free tier safety-net fallbacks for each key (in case all paid credits are depleted)
-    free_fallback_model = "meta-llama/llama-3.3-70b-instruct:free"
-    if not model_name.endswith(":free"):
-        for k in keys:
-            fallbacks.append(_create_single_chat_model(k, free_fallback_model, temperature, max_tokens))
+    free_fallback_models = ["openrouter/free", "google/gemma-4-31b-it:free"]
+    if not any(model_name.endswith(sfx) for sfx in [":free", "openrouter/free"]):
+        for free_model in free_fallback_models:
+            for k in keys:
+                fallbacks.append(_create_single_chat_model(k, free_model, temperature, min(max_tokens, 600)))
 
     if not fallbacks:
         return primary_model
