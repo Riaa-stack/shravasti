@@ -5,7 +5,7 @@ interface User {
   id: string;
   email: string;
   name: string;
-  role: 'student' | 'researcher' | 'academician' | 'admin';
+  role: 'student' | 'researcher' | 'professor' | 'reviewer' | 'admin' | 'guest' | 'academician';
 }
 
 interface AuthState {

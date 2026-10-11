@@ -67,11 +67,30 @@ export function Dashboard() {
 
   return (
     <div className="space-y-8 animate-fade-in pb-12">
-      <div>
-        <h1 className="text-3xl font-display font-bold tracking-tight">
-          Welcome back, {user?.name?.split(' ')[0] || 'User'}
-        </h1>
-        <p className="text-muted-foreground mt-1">Here is the overview of your research workspace.</p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-3xl font-display font-bold tracking-tight">
+              Welcome back, {user?.name || 'User'}
+            </h1>
+            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wider border shadow-sm ${
+              user?.role === 'professor' 
+                ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/30'
+                : user?.role === 'researcher'
+                ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30'
+                : user?.role === 'student'
+                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                : user?.role === 'reviewer'
+                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
+                : user?.role === 'admin'
+                ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30'
+                : 'bg-primary/10 text-primary border-primary/20'
+            }`}>
+              {user?.role || 'Guest'}
+            </span>
+          </div>
+          <p className="text-muted-foreground mt-1">Here is the overview of your research workspace.</p>
+        </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -110,7 +129,7 @@ export function Dashboard() {
                   paddingAngle={5}
                   dataKey="value"
                 >
-                  {topicData.map((entry: any, index: number) => (
+                  {topicData.map((_entry: any, index: number) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>

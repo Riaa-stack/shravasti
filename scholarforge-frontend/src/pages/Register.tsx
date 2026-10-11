@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { BrainCircuit, Loader2, ArrowRight } from 'lucide-react';
+import { Loader2, ArrowRight } from 'lucide-react';
 import { apiClient } from '@/api/client';
 import { toast } from 'sonner';
 import { ScholarIcon } from '@/components/ui/ScholarIcon';
@@ -92,11 +92,15 @@ export function Register() {
               <select 
                 value={role}
                 onChange={e => setRole(e.target.value)}
-                className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all capitalize"
               >
                 <option value="student">Student</option>
                 <option value="researcher">Researcher</option>
+                <option value="professor">Professor</option>
+                <option value="reviewer">Reviewer</option>
                 <option value="academician">Academician</option>
+                <option value="admin">Admin</option>
+                <option value="guest">Guest</option>
               </select>
             </div>
 

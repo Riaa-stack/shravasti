@@ -2,6 +2,7 @@ fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 pydantic>=2.5.3
 pydantic-settings>=2.1.0
+email-validator>=2.0.0
 sqlalchemy[asyncio]>=2.0.25
 alembic>=1.13.1
 asyncpg>=0.29.0
@@ -31,6 +32,7 @@ chromadb>=0.4.22
 langchain>=0.1.0
 langgraph>=0.0.21
 langchain-community>=0.0.13
+langchain-openai>=0.1.0
 
 # PDF / NLP
 pymupdf>=1.23.8

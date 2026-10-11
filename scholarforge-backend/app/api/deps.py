@@ -37,7 +37,13 @@ async def get_current_user(session: SessionDep, token: TokenDep) -> User:
             detail="Could not validate credentials",
         )
     
-    stmt = select(User).where(User.id == token_data.sub)
+    import uuid as _uuid
+    try:
+        user_uuid = _uuid.UUID(str(token_data.sub))
+    except (ValueError, TypeError):
+        user_uuid = token_data.sub
+
+    stmt = select(User).where(User.id == user_uuid)
     result = await session.execute(stmt)
     user = result.scalar_one_or_none()
     

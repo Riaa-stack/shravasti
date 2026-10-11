@@ -22,15 +22,35 @@ class Settings(BaseSettings):
     # ChromaDB
     CHROMA_PERSIST_DIR: str = "/data/chroma"
 
-    # OpenRouter (LLM)
+    # OpenRouter (LLM) - Multi-Key failover & rotation
     OPENROUTER_API_KEY: str = ""
+    OPENROUTER_API_KEY_1: str = ""
+    OPENROUTER_API_KEY_2: str = ""
+    OPENROUTER_API_KEY_3: str = ""
+    OPENROUTER_API_KEY_4: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+
+    @property
+    def ALL_OPENROUTER_KEYS(self) -> list[str]:
+        raw_keys = [
+            self.OPENROUTER_API_KEY_1,
+            self.OPENROUTER_API_KEY_2,
+            self.OPENROUTER_API_KEY_3,
+            self.OPENROUTER_API_KEY_4,
+            self.OPENROUTER_API_KEY,
+        ]
+        unique_keys: list[str] = []
+        for k in raw_keys:
+            clean_k = (k or "").strip()
+            if clean_k and clean_k not in unique_keys:
+                unique_keys.append(clean_k)
+        return unique_keys
 
     LLM_MODEL_LITERATURE_REVIEW: str = "deepseek/deepseek-chat"
     LLM_MODEL_METHODOLOGY: str = "deepseek/deepseek-chat"
-    LLM_MODEL_GAP: str = "deepseek/deepseek-r1"
+    LLM_MODEL_GAP: str = "deepseek/deepseek-chat"
     LLM_MODEL_TREND: str = "qwen/qwen-2.5-72b-instruct"
-    LLM_MODEL_IDEA: str = "deepseek/deepseek-r1"
+    LLM_MODEL_IDEA: str = "deepseek/deepseek-chat"
     LLM_MODEL_CITATION: str = "deepseek/deepseek-chat"
     LLM_MODEL_CHAT: str = "deepseek/deepseek-chat"
     LLM_MODEL_DIFFICULTY: str = "google/gemma-3-27b-it"

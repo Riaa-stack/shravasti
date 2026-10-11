@@ -3,10 +3,16 @@ import { create } from 'zustand';
 export interface Paper {
   id: string;
   title: string;
-  authors: string;
-  abstract: string;
+  authors?: string[] | string;
+  abstract?: string;
+  category?: string;
+  publication_year?: number;
+  venue?: string;
+  doi?: string;
+  file_path?: string;
   status: 'uploaded' | 'processing' | 'processed' | 'failed';
-  upload_date: string;
+  upload_date?: string;
+  created_at?: string;
   difficulty_level?: 'easy' | 'medium' | 'hard';
 }
 
@@ -18,6 +24,8 @@ interface PaperState {
   updatePaper: (id: string, updates: Partial<Paper>) => void;
   toggleSelection: (id: string) => void;
   clearSelection: () => void;
+  selectAll: () => void;
+  setSelectedPaperIds: (ids: string[]) => void;
 }
 
 export const usePaperStore = create<PaperState>((set) => ({
@@ -34,4 +42,6 @@ export const usePaperStore = create<PaperState>((set) => ({
       : [...state.selectedPaperIds, id]
   })),
   clearSelection: () => set({ selectedPaperIds: [] }),
+  selectAll: () => set((state) => ({ selectedPaperIds: state.papers.map(p => p.id) })),
+  setSelectedPaperIds: (ids) => set({ selectedPaperIds: ids }),
 }));

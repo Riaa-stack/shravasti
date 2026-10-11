@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { Outlet, NavLink } from 'react-router-dom';
 import { 
   BookOpen, 
   Settings2, 
@@ -22,8 +22,6 @@ const agentNav = [
 ];
 
 export function AgentLayout() {
-  const location = useLocation();
-
   return (
     <div className="flex h-full gap-6 animate-fade-in pb-8">
       {/* Agent Selector Sidebar */}

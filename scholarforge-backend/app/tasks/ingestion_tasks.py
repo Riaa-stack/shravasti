@@ -78,7 +78,8 @@ async def process_paper_task(paper_id: str) -> None:
 
             metadata = await extract_metadata(
                 first_page_text,
-                full_text
+                full_text,
+                paper.file_path
             )
 
             logger.info(

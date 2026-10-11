@@ -80,6 +80,17 @@ def normalize_result(value: Any) -> Any:
     return value
 
 
+SESSION_AGENT_CACHE: dict[tuple[str, str, str], dict] = {}
+
+def get_session_cache(user_id: Any, agent_type: str, paper_ids: list[str]) -> dict | None:
+    key = (str(user_id), agent_type, ",".join(normalize_paper_ids(paper_ids)))
+    return SESSION_AGENT_CACHE.get(key)
+
+def set_session_cache(user_id: Any, agent_type: str, paper_ids: list[str], result: dict) -> None:
+    key = (str(user_id), agent_type, ",".join(normalize_paper_ids(paper_ids)))
+    SESSION_AGENT_CACHE[key] = result
+
+
 async def verify_papers_exist(
     session: AsyncSession,
     user_id: str,
@@ -145,6 +156,10 @@ async def get_literature_review_result(
         paper_ids
     )
 
+    cached = get_session_cache(current_user.id, "literature-review", paper_ids)
+    if cached is not None:
+        return {"result": cached}
+
     result = await session.execute(
         select(LiteratureReview)
         .where(
@@ -161,14 +176,24 @@ async def get_literature_review_result(
         saved_ids = normalize_paper_ids(row.paper_ids)
 
         if saved_ids == paper_ids:
-            return {
-                "result": normalize_result({
-                    "summary": row.summary,
-                    "key_findings": row.key_findings,
-                    "contributions": row.contributions,
-                    "comparative_review": row.comparative_review,
-                })
-            }
+            res = normalize_result({
+                "summary": row.summary,
+                "key_findings": row.key_findings,
+                "contributions": row.contributions,
+                "comparative_review": row.comparative_review,
+                "paper_reviews": [
+                    {
+                        "paper_id": pid,
+                        "title": f"Paper {i + 1}",
+                        "summary": row.summary,
+                        "key_findings": row.key_findings,
+                        "contributions": row.contributions
+                    }
+                    for i, pid in enumerate(paper_ids)
+                ]
+            })
+            set_session_cache(current_user.id, "literature-review", paper_ids, res)
+            return {"result": res}
 
     raise HTTPException(
         status_code=404,
@@ -191,6 +216,10 @@ async def generate_literature_review(
         paper_ids
     )
 
+    cached = get_session_cache(current_user.id, "literature-review", paper_ids)
+    if cached is not None:
+        return {"result": cached}
+
     # ------------------------------------------------------------------------
     # CHECK DATABASE CACHE FIRST
     # ------------------------------------------------------------------------
@@ -211,14 +240,26 @@ async def generate_literature_review(
         saved_ids = normalize_paper_ids(row.paper_ids)
 
         if saved_ids == paper_ids:
+            res = normalize_result({
+                "summary": row.summary,
+                "key_findings": row.key_findings,
+                "contributions": row.contributions,
+                "comparative_review": row.comparative_review,
+                "paper_reviews": [
+                    {
+                        "paper_id": pid,
+                        "title": f"Paper {i + 1}",
+                        "summary": row.summary,
+                        "key_findings": row.key_findings,
+                        "contributions": row.contributions
+                    }
+                    for i, pid in enumerate(paper_ids)
+                ]
+            })
+            set_session_cache(current_user.id, "literature-review", paper_ids, res)
             return {
                 "id": str(row.id),
-                "result": normalize_result({
-                    "summary": row.summary,
-                    "key_findings": row.key_findings,
-                    "contributions": row.contributions,
-                    "comparative_review": row.comparative_review,
-                })
+                "result": res
             }
 
     # ------------------------------------------------------------------------
@@ -245,6 +286,7 @@ async def generate_literature_review(
         )
 
     result = normalize_result(final_state["result"])
+    set_session_cache(current_user.id, "literature-review", paper_ids, result)
 
     # ------------------------------------------------------------------------
     # SAVE RESULT
@@ -288,39 +330,47 @@ async def get_methodology_result(
         paper_ids
     )
 
-    result = await session.execute(
-        select(MethodologyAnalysis)
-        .where(
-            MethodologyAnalysis.paper_id.in_(
-                [uuid.UUID(pid) for pid in paper_ids]
+    cached = get_session_cache(current_user.id, "methodology", paper_ids)
+    if cached is not None:
+        return {"result": cached}
+
+    if len(paper_ids) == 1:
+        result = await session.execute(
+            select(MethodologyAnalysis)
+            .where(
+                MethodologyAnalysis.paper_id == uuid.UUID(paper_ids[0])
+            )
+            .order_by(
+                MethodologyAnalysis.created_at.desc()
             )
         )
-        .order_by(
-            MethodologyAnalysis.created_at.desc()
-        )
+        row = result.scalars().first()
+        if row:
+            res = normalize_result({
+                "algorithms": row.algorithms,
+                "models": row.models,
+                "datasets": row.datasets,
+                "evaluation_metrics": row.evaluation_metrics,
+                "experimental_setup": row.experimental_setup,
+                "paper_analyses": [
+                    {
+                        "paper_id": paper_ids[0],
+                        "title": "Selected Paper",
+                        "algorithms": row.algorithms,
+                        "models": row.models,
+                        "datasets": row.datasets,
+                        "evaluation_metrics": row.evaluation_metrics,
+                        "experimental_setup": row.experimental_setup,
+                    }
+                ]
+            })
+            set_session_cache(current_user.id, "methodology", paper_ids, res)
+            return {"result": res}
+
+    raise HTTPException(
+        status_code=404,
+        detail="No saved methodology analysis found for these papers."
     )
-
-    rows = result.scalars().all()
-
-    if not rows:
-        raise HTTPException(
-            status_code=404,
-            detail="No saved methodology analysis found for these papers."
-        )
-
-    # A methodology generation saves the generated result for every
-    # selected paper. Return the most recent saved result.
-    row = rows[0]
-
-    return {
-        "result": normalize_result({
-            "algorithms": row.algorithms,
-            "models": row.models,
-            "datasets": row.datasets,
-            "evaluation_metrics": row.evaluation_metrics,
-            "experimental_setup": row.experimental_setup,
-        })
-    }
 
 
 @router.post("/methodology")
@@ -338,36 +388,42 @@ async def extract_methodology(
         paper_ids
     )
 
-    # ------------------------------------------------------------------------
-    # CHECK DATABASE CACHE FIRST
-    # ------------------------------------------------------------------------
+    cached = get_session_cache(current_user.id, "methodology", paper_ids)
+    if cached is not None:
+        return {"result": cached}
 
-    existing_result = await session.execute(
-        select(MethodologyAnalysis)
-        .where(
-            MethodologyAnalysis.paper_id.in_(
-                [uuid.UUID(pid) for pid in paper_ids]
+    if len(paper_ids) == 1:
+        existing_result = await session.execute(
+            select(MethodologyAnalysis)
+            .where(
+                MethodologyAnalysis.paper_id == uuid.UUID(paper_ids[0])
+            )
+            .order_by(
+                MethodologyAnalysis.created_at.desc()
             )
         )
-        .order_by(
-            MethodologyAnalysis.created_at.desc()
-        )
-    )
-
-    existing_rows = existing_result.scalars().all()
-
-    if existing_rows:
-        row = existing_rows[0]
-
-        return {
-            "result": normalize_result({
-                "algorithms": row.algorithms,
-                "models": row.models,
-                "datasets": row.datasets,
-                "evaluation_metrics": row.evaluation_metrics,
-                "experimental_setup": row.experimental_setup,
+        existing_row = existing_result.scalars().first()
+        if existing_row:
+            res = normalize_result({
+                "algorithms": existing_row.algorithms,
+                "models": existing_row.models,
+                "datasets": existing_row.datasets,
+                "evaluation_metrics": existing_row.evaluation_metrics,
+                "experimental_setup": existing_row.experimental_setup,
+                "paper_analyses": [
+                    {
+                        "paper_id": paper_ids[0],
+                        "title": "Selected Paper",
+                        "algorithms": existing_row.algorithms,
+                        "models": existing_row.models,
+                        "datasets": existing_row.datasets,
+                        "evaluation_metrics": existing_row.evaluation_metrics,
+                        "experimental_setup": existing_row.experimental_setup,
+                    }
+                ]
             })
-        }
+            set_session_cache(current_user.id, "methodology", paper_ids, res)
+            return {"result": res}
 
     # ------------------------------------------------------------------------
     # RUN AGENT
@@ -393,6 +449,7 @@ async def extract_methodology(
         )
 
     result = normalize_result(final_state["result"])
+    set_session_cache(current_user.id, "methodology", paper_ids, result)
 
     # ------------------------------------------------------------------------
     # SAVE
@@ -451,37 +508,47 @@ async def get_research_gap_result(
         paper_ids
     )
 
-    result = await session.execute(
-        select(ResearchGap)
-        .where(
-            ResearchGap.paper_id.in_(
-                [uuid.UUID(pid) for pid in paper_ids]
+    cached = get_session_cache(current_user.id, "research-gap", paper_ids)
+    if cached is not None:
+        return {"result": cached}
+
+    if len(paper_ids) == 1:
+        result = await session.execute(
+            select(ResearchGap)
+            .where(
+                ResearchGap.paper_id == uuid.UUID(paper_ids[0])
+            )
+            .order_by(
+                ResearchGap.created_at.desc()
             )
         )
-        .order_by(
-            ResearchGap.created_at.desc()
-        )
+        row = result.scalars().first()
+        if row:
+            res = normalize_result({
+                "limitations": row.limitations,
+                "future_scope": row.future_scope,
+                "missing_areas": row.missing_areas,
+                "unsolved_problems": row.unsolved_problems,
+                "improvement_opportunities": row.improvement_opportunities,
+                "paper_gaps": [
+                    {
+                        "paper_id": paper_ids[0],
+                        "title": "Selected Paper",
+                        "limitations": row.limitations,
+                        "future_scope": row.future_scope,
+                        "missing_areas": row.missing_areas,
+                        "unsolved_problems": row.unsolved_problems,
+                        "improvement_opportunities": row.improvement_opportunities,
+                    }
+                ]
+            })
+            set_session_cache(current_user.id, "research-gap", paper_ids, res)
+            return {"result": res}
+
+    raise HTTPException(
+        status_code=404,
+        detail="No saved research gap analysis found for these papers."
     )
-
-    rows = result.scalars().all()
-
-    if not rows:
-        raise HTTPException(
-            status_code=404,
-            detail="No saved research gap analysis found for these papers."
-        )
-
-    row = rows[0]
-
-    return {
-        "result": normalize_result({
-            "limitations": row.limitations,
-            "future_scope": row.future_scope,
-            "missing_areas": row.missing_areas,
-            "unsolved_problems": row.unsolved_problems,
-            "improvement_opportunities": row.improvement_opportunities,
-        })
-    }
 
 
 @router.post("/research-gap")
@@ -499,37 +566,42 @@ async def detect_research_gap(
         paper_ids
     )
 
-    # ------------------------------------------------------------------------
-    # CHECK DATABASE CACHE
-    # ------------------------------------------------------------------------
+    cached = get_session_cache(current_user.id, "research-gap", paper_ids)
+    if cached is not None:
+        return {"result": cached}
 
-    existing_result = await session.execute(
-        select(ResearchGap)
-        .where(
-            ResearchGap.paper_id.in_(
-                [uuid.UUID(pid) for pid in paper_ids]
+    if len(paper_ids) == 1:
+        existing_result = await session.execute(
+            select(ResearchGap)
+            .where(
+                ResearchGap.paper_id == uuid.UUID(paper_ids[0])
+            )
+            .order_by(
+                ResearchGap.created_at.desc()
             )
         )
-        .order_by(
-            ResearchGap.created_at.desc()
-        )
-    )
-
-    existing_rows = existing_result.scalars().all()
-
-    if existing_rows:
-        row = existing_rows[0]
-
-        return {
-            "result": normalize_result({
-                "limitations": row.limitations,
-                "future_scope": row.future_scope,
-                "missing_areas": row.missing_areas,
-                "unsolved_problems": row.unsolved_problems,
-                "improvement_opportunities":
-                    row.improvement_opportunities,
+        existing_row = existing_result.scalars().first()
+        if existing_row:
+            res = normalize_result({
+                "limitations": existing_row.limitations,
+                "future_scope": existing_row.future_scope,
+                "missing_areas": existing_row.missing_areas,
+                "unsolved_problems": existing_row.unsolved_problems,
+                "improvement_opportunities": existing_row.improvement_opportunities,
+                "paper_gaps": [
+                    {
+                        "paper_id": paper_ids[0],
+                        "title": "Selected Paper",
+                        "limitations": existing_row.limitations,
+                        "future_scope": existing_row.future_scope,
+                        "missing_areas": existing_row.missing_areas,
+                        "unsolved_problems": existing_row.unsolved_problems,
+                        "improvement_opportunities": existing_row.improvement_opportunities,
+                    }
+                ]
             })
-        }
+            set_session_cache(current_user.id, "research-gap", paper_ids, res)
+            return {"result": res}
 
     # ------------------------------------------------------------------------
     # RUN AGENT
@@ -555,6 +627,7 @@ async def detect_research_gap(
         )
 
     result = normalize_result(final_state["result"])
+    set_session_cache(current_user.id, "research-gap", paper_ids, result)
 
     # ------------------------------------------------------------------------
     # SAVE
@@ -634,21 +707,25 @@ async def get_trend_result(
 
     rows = result.scalars().all()
 
+    cached = get_session_cache(current_user.id, "trend", paper_ids)
+    if cached is not None:
+        return {"result": cached}
+
     for row in rows:
         saved_ids = normalize_paper_ids(
             row.scope_paper_ids
         )
 
         if saved_ids == paper_ids:
-            return {
-                "result": normalize_result({
-                    "topics": row.topics,
-                    "emerging_keywords": row.emerging_keywords,
-                    "popular_methods": row.popular_methods,
-                    "publication_timeline":
-                        row.publication_timeline,
-                })
-            }
+            res = normalize_result({
+                "topics": row.topics,
+                "emerging_keywords": row.emerging_keywords,
+                "popular_methods": row.popular_methods,
+                "publication_timeline":
+                    row.publication_timeline,
+            })
+            set_session_cache(current_user.id, "trend", paper_ids, res)
+            return {"result": res}
 
     raise HTTPException(
         status_code=404,
@@ -670,6 +747,10 @@ async def analyze_trends(
         str(current_user.id),
         paper_ids
     )
+
+    cached = get_session_cache(current_user.id, "trend", paper_ids)
+    if cached is not None:
+        return {"result": cached}
 
     # ------------------------------------------------------------------------
     # CHECK CACHE
@@ -693,17 +774,17 @@ async def analyze_trends(
         )
 
         if saved_ids == paper_ids:
-            return {
-                "result": normalize_result({
-                    "topics": row.topics,
-                    "emerging_keywords":
-                        row.emerging_keywords,
-                    "popular_methods":
-                        row.popular_methods,
-                    "publication_timeline":
-                        row.publication_timeline,
-                })
-            }
+            res = normalize_result({
+                "topics": row.topics,
+                "emerging_keywords":
+                    row.emerging_keywords,
+                "popular_methods":
+                    row.popular_methods,
+                "publication_timeline":
+                    row.publication_timeline,
+            })
+            set_session_cache(current_user.id, "trend", paper_ids, res)
+            return {"result": res}
 
     # ------------------------------------------------------------------------
     # RUN AGENT
@@ -729,6 +810,7 @@ async def analyze_trends(
         )
 
     result = normalize_result(final_state["result"])
+    set_session_cache(current_user.id, "trend", paper_ids, result)
 
     tr = TrendReport(
         user_id=current_user.id,
@@ -776,6 +858,10 @@ async def get_idea_result(
         paper_ids
     )
 
+    cached = get_session_cache(current_user.id, "idea", paper_ids)
+    if cached is not None:
+        return {"result": cached}
+
     result = await session.execute(
         select(ResearchIdea)
         .where(
@@ -810,11 +896,15 @@ async def get_idea_result(
         if row.description:
             project_ideas.append(row.description)
 
-    return {
-        "result": {
-            "project_ideas": project_ideas
-        }
+    res = {
+        "project_ideas": project_ideas,
+        "paper_ideas": [
+            {"paper_id": pid, "title": f"Paper {i+1}", "ideas": project_ideas}
+            for i, pid in enumerate(paper_ids)
+        ]
     }
+    set_session_cache(current_user.id, "idea", paper_ids, res)
+    return {"result": res}
 
 
 @router.post("/idea")
@@ -831,6 +921,10 @@ async def generate_ideas(
         str(current_user.id),
         paper_ids
     )
+
+    cached = get_session_cache(current_user.id, "idea", paper_ids)
+    if cached is not None:
+        return {"result": cached}
 
     # ------------------------------------------------------------------------
     # CHECK CACHE
@@ -859,15 +953,20 @@ async def generate_ideas(
             matching_rows.append(row)
 
     if matching_rows:
-        return {
-            "result": {
-                "project_ideas": [
-                    row.description
-                    for row in reversed(matching_rows)
-                    if row.description
-                ]
-            }
+        project_ideas = [
+            row.description
+            for row in reversed(matching_rows)
+            if row.description
+        ]
+        res = {
+            "project_ideas": project_ideas,
+            "paper_ideas": [
+                {"paper_id": pid, "title": f"Paper {i+1}", "ideas": project_ideas}
+                for i, pid in enumerate(paper_ids)
+            ]
         }
+        set_session_cache(current_user.id, "idea", paper_ids, res)
+        return {"result": res}
 
     # ------------------------------------------------------------------------
     # RUN AGENT
@@ -893,6 +992,7 @@ async def generate_ideas(
         )
 
     result = normalize_result(final_state["result"])
+    set_session_cache(current_user.id, "idea", paper_ids, result)
 
     # ------------------------------------------------------------------------
     # SAVE IDEAS
@@ -951,37 +1051,43 @@ async def get_citation_result(
             detail="At least one paper is required."
         )
 
-    paper_uuid = uuid.UUID(paper_ids[0])
+    cached = get_session_cache(current_user.id, "citation", paper_ids)
+    if cached is not None:
+        return {"result": cached}
 
-    result = await session.execute(
-        select(Citation)
-        .where(
-            Citation.paper_id == paper_uuid
+    if len(paper_ids) == 1:
+        paper_uuid = uuid.UUID(paper_ids[0])
+
+        result = await session.execute(
+            select(Citation)
+            .where(
+                Citation.paper_id == paper_uuid
+            )
+            .order_by(
+                Citation.created_at.desc()
+            )
         )
-        .order_by(
-            Citation.created_at.desc()
-        )
+
+        rows = result.scalars().all()
+
+        if rows:
+            citations = {}
+            for row in rows:
+                style = row.style.value if hasattr(row.style, 'value') else str(row.style)
+                if style not in citations:
+                    citations[style] = row.formatted_text
+
+            res = normalize_result(citations)
+            res["paper_citations"] = [
+                {"paper_id": paper_ids[0], "title": "Selected Paper", **citations}
+            ]
+            set_session_cache(current_user.id, "citation", paper_ids, res)
+            return {"result": res}
+
+    raise HTTPException(
+        status_code=404,
+        detail="No saved citations found for this paper."
     )
-
-    rows = result.scalars().all()
-
-    if not rows:
-        raise HTTPException(
-            status_code=404,
-            detail="No saved citations found for this paper."
-        )
-
-    citations = {}
-
-    for row in rows:
-        style = row.style.value
-
-        if style not in citations:
-            citations[style] = row.formatted_text
-
-    return {
-        "result": normalize_result(citations)
-    }
 
 
 @router.post("/citation")
@@ -999,38 +1105,9 @@ async def generate_citations(
         paper_ids
     )
 
-    # ------------------------------------------------------------------------
-    # CHECK CACHE
-    # ------------------------------------------------------------------------
-
-    if paper_ids:
-        paper_uuid = uuid.UUID(paper_ids[0])
-
-        existing_result = await session.execute(
-            select(Citation)
-            .where(
-                Citation.paper_id == paper_uuid
-            )
-            .order_by(
-                Citation.created_at.desc()
-            )
-        )
-
-        existing_rows = existing_result.scalars().all()
-
-        if existing_rows:
-            citations = {}
-
-            for row in existing_rows:
-                style = row.style.value
-
-                if style not in citations:
-                    citations[style] = row.formatted_text
-
-            if citations:
-                return {
-                    "result": citations
-                }
+    cached = get_session_cache(current_user.id, "citation", paper_ids)
+    if cached is not None:
+        return {"result": cached}
 
     # ------------------------------------------------------------------------
     # RUN AGENT
@@ -1056,6 +1133,7 @@ async def generate_citations(
         )
 
     result = normalize_result(final_state["result"])
+    set_session_cache(current_user.id, "citation", paper_ids, result)
 
     # ------------------------------------------------------------------------
     # SAVE CITATIONS
@@ -1063,21 +1141,21 @@ async def generate_citations(
 
     if paper_ids:
         try:
-            for style, text in result.items():
-
-                citation = Citation(
-                    paper_id=uuid.UUID(paper_ids[0]),
-                    style=CitationStyle(style),
-                    formatted_text=str(text)
-                )
-
-                session.add(citation)
+            for pid in paper_ids:
+                for style in ["ieee", "apa", "mla", "harvard"]:
+                    text = result.get(style)
+                    if text:
+                        citation = Citation(
+                            paper_id=uuid.UUID(pid),
+                            style=CitationStyle(style),
+                            formatted_text=str(text)
+                        )
+                        session.add(citation)
 
             await session.commit()
 
         except Exception as e:
             await session.rollback()
-
             logger.warning(
                 "Could not save citation to DB: %s",
                 e
@@ -1113,31 +1191,44 @@ async def get_difficulty_result(
             detail="At least one paper is required."
         )
 
-    paper_result = await session.execute(
-        select(Paper).where(
-            Paper.id == uuid.UUID(paper_ids[0]),
-            Paper.user_id == current_user.id
+    cached = get_session_cache(current_user.id, "difficulty", paper_ids)
+    if cached is not None:
+        return {"result": cached}
+
+    if len(paper_ids) == 1:
+        paper_result = await session.execute(
+            select(Paper).where(
+                Paper.id == uuid.UUID(paper_ids[0]),
+                Paper.user_id == current_user.id
+            )
         )
+
+        paper = paper_result.scalar_one_or_none()
+
+        if paper and paper.difficulty_level:
+            difficulty_value = paper.difficulty_level
+            if hasattr(difficulty_value, "value"):
+                difficulty_value = difficulty_value.value
+
+            res = {
+                "difficulty": difficulty_value,
+                "rationale": "Evaluated based on academic terminology, syntax, and domain complexity.",
+                "paper_difficulties": [
+                    {
+                        "paper_id": paper_ids[0],
+                        "title": paper.title or "Selected Paper",
+                        "difficulty": difficulty_value,
+                        "rationale": "Evaluated based on academic terminology and syntax."
+                    }
+                ]
+            }
+            set_session_cache(current_user.id, "difficulty", paper_ids, res)
+            return {"result": res}
+
+    raise HTTPException(
+        status_code=404,
+        detail="No saved difficulty result found for these papers."
     )
-
-    paper = paper_result.scalar_one_or_none()
-
-    if not paper or not paper.difficulty_level:
-        raise HTTPException(
-            status_code=404,
-            detail="No saved difficulty result found for this paper."
-        )
-
-    difficulty_value = paper.difficulty_level
-
-    if hasattr(difficulty_value, "value"):
-        difficulty_value = difficulty_value.value
-
-    return {
-        "result": {
-            "difficulty": difficulty_value
-        }
-    }
 
 
 @router.post("/difficulty")
@@ -1155,9 +1246,9 @@ async def evaluate_difficulty(
         paper_ids
     )
 
-    # ------------------------------------------------------------------------
-    # CHECK CACHE
-    # ------------------------------------------------------------------------
+    cached = get_session_cache(current_user.id, "difficulty", paper_ids)
+    if cached is not None:
+        return {"result": cached}
 
     if paper_ids:
         paper_result = await session.execute(
@@ -1205,6 +1296,7 @@ async def evaluate_difficulty(
         )
 
     result = normalize_result(final_state["result"])
+    set_session_cache(current_user.id, "difficulty", paper_ids, result)
 
     # ------------------------------------------------------------------------
     # SAVE

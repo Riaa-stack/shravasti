@@ -27,8 +27,15 @@ async def upload_papers(
     """Upload one or more research papers (PDF)."""
     uploaded_papers = []
     
-    # Ensure storage directory exists
-    user_storage_dir = os.path.join(settings.PAPERS_STORAGE_DIR, str(current_user.id))
+    # Ensure storage directory exists with safe fallback
+    storage_root = settings.PAPERS_STORAGE_DIR
+    try:
+        os.makedirs(storage_root, exist_ok=True)
+    except Exception:
+        storage_root = os.path.abspath(os.path.join(".", "data", "papers"))
+        os.makedirs(storage_root, exist_ok=True)
+        
+    user_storage_dir = os.path.join(storage_root, str(current_user.id))
     os.makedirs(user_storage_dir, exist_ok=True)
     
     for file in files:
@@ -75,9 +82,18 @@ async def read_papers(
     current_user: CurrentUser,
     skip: int = 0,
     limit: int = 100,
+    query: str | None = None,
 ) -> Any:
-    """Retrieve user's papers."""
-    stmt = select(Paper).where(Paper.user_id == current_user.id).offset(skip).limit(limit)
+    """Retrieve user's papers with optional keyword search."""
+    stmt = select(Paper).where(Paper.user_id == current_user.id)
+    if query and query.strip():
+        search_pattern = f"%{query.strip()}%"
+        stmt = stmt.where(
+            (Paper.title.ilike(search_pattern)) |
+            (Paper.venue.ilike(search_pattern)) |
+            (Paper.category.ilike(search_pattern))
+        )
+    stmt = stmt.order_by(Paper.created_at.desc()).offset(skip).limit(limit)
     result = await session.execute(stmt)
     return result.scalars().all()
 

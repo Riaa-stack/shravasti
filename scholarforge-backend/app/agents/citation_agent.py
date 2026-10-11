@@ -63,52 +63,86 @@ def format_harvard(meta: dict) -> str:
     return f"{author_str}, {year}. {title}. {venue}."
 
 async def run_citation_generation(state: ResearchState) -> dict:
-    paper_id = state['paper_ids'][0]
-    logger.info(f"Running Citation Agent for paper {paper_id}")
-    
-    chunks = retrieve_chunks(state["user_id"], [paper_id], n_results=5)
-    
-    if not chunks:
-        logger.warning(f"No chunks found for paper {paper_id}. Paper may not be processed yet.")
-        # Return placeholder citations if no content is available
-        placeholder = {
-            "title": "[Paper not yet processed]",
-            "authors": [],
-            "year": None,
-            "venue": None
-        }
-        return {
-            "ieee": format_ieee(placeholder),
-            "apa": format_apa(placeholder),
-            "mla": format_mla(placeholder),
-            "harvard": format_harvard(placeholder)
-        }
-    
-    context = "\n\n".join([c["content"] for c in chunks])
-    
-    prompt = PromptTemplate(
-        template=CITATION_PROMPT,
-        input_variables=["context"]
-    )
+    paper_ids = state.get('paper_ids', [])
+    if not paper_ids:
+        raise ValueError("Citation agent requires at least one selected paper.")
+        
+    logger.info(f"Running Citation Agent for {len(paper_ids)} paper(s): {paper_ids}")
     
     llm = get_llm(settings.LLM_MODEL_CITATION)
-    # Use json_mode for broad OpenRouter model compatibility instead of tool-calling structured output
     structured_llm = llm.with_structured_output(NormalizedMetadata, method="json_mode")
+    prompt = PromptTemplate(template=CITATION_PROMPT, input_variables=["context"])
     chain = prompt | structured_llm
     
-    try:
-        metadata_obj = await chain.ainvoke({"context": context})
-        metadata = metadata_obj.model_dump()
-    except Exception as e:
-        logger.error(f"Citation LLM call failed: {e}")
-        metadata = {"title": None, "authors": [], "year": None, "venue": None}
+    paper_citations = []
     
-    # Generate formats
-    result = {
-        "ieee": format_ieee(metadata),
-        "apa": format_apa(metadata),
-        "mla": format_mla(metadata),
-        "harvard": format_harvard(metadata)
+    for idx, paper_id in enumerate(paper_ids):
+        chunks = retrieve_chunks(state["user_id"], [paper_id], n_results=5)
+        if not chunks:
+            placeholder = {
+                "title": f"Paper {idx + 1}",
+                "authors": [],
+                "year": None,
+                "venue": None
+            }
+            c_dict = {
+                "paper_id": str(paper_id),
+                "title": f"Paper {idx + 1}",
+                "ieee": format_ieee(placeholder),
+                "apa": format_apa(placeholder),
+                "mla": format_mla(placeholder),
+                "harvard": format_harvard(placeholder)
+            }
+        else:
+            context = "\n\n".join([c["content"] for c in chunks])
+            try:
+                metadata_obj = await chain.ainvoke({"context": context})
+                metadata = metadata_obj.model_dump()
+            except Exception as e:
+                logger.error(f"Citation LLM call failed for paper {paper_id}: {e}")
+                metadata = {"title": f"Paper {idx + 1}", "authors": [], "year": None, "venue": None}
+
+        # Check DB for verified paper metadata if any field is missing
+        try:
+            from app.db.postgres import async_session_maker
+            from sqlalchemy import select
+            from app.models.paper import Paper
+            import uuid
+            async with async_session_maker() as session:
+                res = await session.execute(select(Paper).where(Paper.id == uuid.UUID(str(paper_id))))
+                db_paper = res.scalar_one_or_none()
+                if db_paper:
+                    if not metadata.get("title") or metadata.get("title").startswith("Paper "):
+                        metadata["title"] = db_paper.title
+                    if not metadata.get("authors"):
+                        metadata["authors"] = db_paper.authors if isinstance(db_paper.authors, list) else ([db_paper.authors] if db_paper.authors else [])
+                    if not metadata.get("year"):
+                        metadata["year"] = db_paper.publication_year
+                    if not metadata.get("venue"):
+                        metadata["venue"] = db_paper.venue
+        except Exception as err:
+            logger.debug(f"Could not load paper from DB for citation: {err}")
+
+        # Ensure title is never empty
+        if not metadata.get("title"):
+            metadata["title"] = f"Research Paper {idx + 1}"
+
+        c_dict = {
+            "paper_id": str(paper_id),
+            "title": metadata.get("title") or f"Paper {idx + 1}",
+            "ieee": format_ieee(metadata),
+            "apa": format_apa(metadata),
+            "mla": format_mla(metadata),
+            "harvard": format_harvard(metadata)
+        }
+        paper_citations.append(c_dict)
+    
+    first = paper_citations[0]
+    return {
+        "ieee": first["ieee"],
+        "apa": first["apa"],
+        "mla": first["mla"],
+        "harvard": first["harvard"],
+        "paper_citations": paper_citations,
+        "comparative_analysis": f"Formatted citations across {len(paper_citations)} selected research paper(s)."
     }
-    
-    return result

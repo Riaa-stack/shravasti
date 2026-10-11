@@ -3,36 +3,97 @@ import uuid
 from datetime import datetime
 from docx import Document
 from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from pptx import Presentation
 
 from app.core.config import settings
 
 def get_export_dir():
-    export_dir = os.path.join(settings.UPLOAD_DIR, "exports")
-    os.makedirs(export_dir, exist_ok=True)
+    export_dir = getattr(settings, "EXPORTS_STORAGE_DIR", "/data/exports")
+    try:
+        os.makedirs(export_dir, exist_ok=True)
+    except Exception:
+        export_dir = os.path.abspath(os.path.join(".", "data", "exports"))
+        os.makedirs(export_dir, exist_ok=True)
     return export_dir
 
 def export_to_pdf(content: str, filename: str) -> str:
     filepath = os.path.join(get_export_dir(), f"{filename}.pdf")
-    c = canvas.Canvas(filepath, pagesize=letter)
-    width, height = letter
-    
-    # Very basic PDF generation
-    textobject = c.beginText()
-    textobject.setTextOrigin(40, height - 40)
-    textobject.setFont("Helvetica", 10)
-    
-    lines = content.split('\n')
-    for line in lines:
-        # Simple wrapping
-        while len(line) > 100:
-            textobject.textLine(line[:100])
-            line = line[100:]
-        textobject.textLine(line)
-        
-    c.drawText(textobject)
-    c.save()
+    doc = SimpleDocTemplate(
+        filepath,
+        pagesize=letter,
+        rightMargin=45,
+        leftMargin=45,
+        topMargin=45,
+        bottomMargin=45
+    )
+    styles = getSampleStyleSheet()
+    story = []
+
+    # Title style
+    title_style = ParagraphStyle(
+        "CustomTitle",
+        parent=styles["Title"],
+        fontSize=18,
+        leading=22,
+        textColor="#1a73e8"
+    )
+    story.append(Paragraph("ScholarForge AI Research Report", title_style))
+    story.append(Spacer(1, 10))
+
+    meta_style = ParagraphStyle(
+        "CustomMeta",
+        parent=styles["Normal"],
+        fontSize=9,
+        leading=12,
+        textColor="#5f6368"
+    )
+    story.append(Paragraph(f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} &bull; ScholarForge AI", meta_style))
+    story.append(Spacer(1, 16))
+
+    body_style = ParagraphStyle(
+        "CustomBody",
+        parent=styles["BodyText"],
+        fontSize=10,
+        leading=14,
+        textColor="#202124"
+    )
+    h2_style = ParagraphStyle(
+        "CustomH2",
+        parent=styles["Heading2"],
+        fontSize=13,
+        leading=17,
+        textColor="#1a73e8"
+    )
+    h3_style = ParagraphStyle(
+        "CustomH3",
+        parent=styles["Heading3"],
+        fontSize=11,
+        leading=15,
+        textColor="#202124"
+    )
+
+    for line in content.split("\n"):
+        clean = line.strip()
+        if not clean:
+            story.append(Spacer(1, 6))
+            continue
+        if clean.startswith("# "):
+            story.append(Paragraph(clean[2:], title_style))
+            story.append(Spacer(1, 8))
+        elif clean.startswith("## "):
+            story.append(Paragraph(clean[3:], h2_style))
+            story.append(Spacer(1, 6))
+        elif clean.startswith("### "):
+            story.append(Paragraph(clean[4:], h3_style))
+            story.append(Spacer(1, 4))
+        else:
+            safe = clean.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            story.append(Paragraph(safe, body_style))
+            story.append(Spacer(1, 3))
+
+    doc.build(story)
     return filepath
 
 def export_to_docx(content: str, filename: str) -> str:

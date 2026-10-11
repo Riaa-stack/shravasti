@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { BrainCircuit, Loader2, ArrowRight } from 'lucide-react';
+import { Loader2, ArrowRight } from 'lucide-react';
 import { apiClient } from '@/api/client';
 import { useAuthStore } from '@/store/authStore';
 import { toast } from 'sonner';

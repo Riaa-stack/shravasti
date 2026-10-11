@@ -1,6 +1,7 @@
 import chromadb
 from chromadb.config import Settings
 import uuid
+from typing import Any
 
 from app.core.config import settings
 
@@ -64,22 +65,24 @@ def add_chunks(user_id: str, paper_id: str, chunks: list[dict], embeddings: list
     
     return ids
 
-def delete_paper_chunks(user_id: str, paper_id: str) -> None:
+def delete_paper_chunks(user_id: Any, paper_id: Any) -> None:
     """Deletes all chunks for a specific paper from ChromaDB."""
     collection = get_collection()
     collection.delete(
-        where={"$and": [{"user_id": user_id}, {"paper_id": paper_id}]}
+        where={"$and": [{"user_id": str(user_id)}, {"paper_id": str(paper_id)}]}
     )
 
-def retrieve_chunks(user_id: str, paper_ids: list[str], query_embedding: list[float] = None, n_results: int = 10, section_filter: str = None) -> list[dict]:
+def retrieve_chunks(user_id: Any, paper_ids: list[Any], query_embedding: list[float] = None, n_results: int = 10, section_filter: str = None) -> list[dict]:
     """Retrieves relevant chunks from ChromaDB for specific papers."""
     collection = get_collection()
     
-    where_clause = {"$and": [{"user_id": user_id}]}
-    if len(paper_ids) == 1:
-        where_clause["$and"].append({"paper_id": paper_ids[0]})
-    elif len(paper_ids) > 1:
-        where_clause["$and"].append({"paper_id": {"$in": paper_ids}})
+    uid_str = str(user_id)
+    pids_str = [str(p) for p in paper_ids]
+    where_clause = {"$and": [{"user_id": uid_str}]}
+    if len(pids_str) == 1:
+        where_clause["$and"].append({"paper_id": pids_str[0]})
+    elif len(pids_str) > 1:
+        where_clause["$and"].append({"paper_id": {"$in": pids_str}})
         
     if section_filter:
         where_clause["$and"].append({"section_title": {"$contains": section_filter}}) # Simple approximation

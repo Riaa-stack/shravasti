@@ -3,10 +3,8 @@ import {
   LayoutDashboard, 
   Files, 
   Search, 
-  LineChart, 
   Settings, 
   LogOut,
-  BrainCircuit,
   MessageSquare,
   Network
 } from 'lucide-react';
@@ -110,7 +108,25 @@ export function Sidebar() {
         </div>
       </nav>
 
-      <div className="p-4 border-t border-border/50">
+      <div className="p-4 border-t border-border/50 space-y-3">
+        {user && (
+          <div className="px-3 py-2.5 rounded-xl bg-card border border-border/70 shadow-sm">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-indigo-600 text-white flex items-center justify-center font-bold text-xs shrink-0">
+                {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold truncate leading-tight text-foreground">{user.name}</p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-[11px] font-medium capitalize text-primary tracking-wide">
+                    {user.role}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         <button
           onClick={logout}
           className="flex items-center gap-3 px-3 py-2 w-full rounded-md text-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"

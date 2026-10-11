@@ -59,6 +59,10 @@ async def login(
             user.id, role=user.role
         ),
         "token_type": "bearer",
+        "user_id": str(user.id),
+        "name": user.name,
+        "email": user.email,
+        "role": user.role.value if hasattr(user.role, "value") else str(user.role),
     }
 
 class RefreshTokenRequest(BaseModel):

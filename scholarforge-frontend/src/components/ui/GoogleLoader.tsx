@@ -1,4 +1,3 @@
-import React from 'react';
 
 export function GoogleLoader({ className = "", size = "md" }: { className?: string, size?: "sm" | "md" | "lg" | "xl" }) {
   const sizeClass = {

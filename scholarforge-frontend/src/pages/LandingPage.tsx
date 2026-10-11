@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { Loader2, Network, BookOpen, Layers, Moon, Sun, CheckCircle2, Zap, Shield, FileSearch } from 'lucide-react';
+import { motion, type Variants } from 'framer-motion';
+import { Loader2, Network, BookOpen, Layers, Moon, Sun, Zap, Shield } from 'lucide-react';
 import { apiClient } from '@/api/client';
 import { useAuthStore } from '@/store/authStore';
 import { useTheme } from '@/store/themeStore';
@@ -14,6 +14,7 @@ export function LandingPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [role, setRole] = useState('student');
   const [loading, setLoading] = useState(false);
   
   const navigate = useNavigate();
@@ -41,7 +42,7 @@ export function LandingPage() {
         setUser(userResponse.data);
         toast.success('Welcome back!');
       } else {
-        await apiClient.post('/auth/register', { email, password, name });
+        await apiClient.post('/auth/register', { email, password, name, role });
         toast.success('Registration successful. Please log in.');
         setIsLogin(true);
       }
@@ -56,9 +57,9 @@ export function LandingPage() {
   const clayShadow = "shadow-[15px_15px_40px_rgba(0,0,0,0.08),-15px_-15px_40px_rgba(255,255,255,0.03),inset_3px_3px_10px_rgba(255,255,255,0.1),inset_-3px_-3px_10px_rgba(0,0,0,0.05)]";
 
   // Reusable animation variants for scroll reveals
-  const fadeInUp = {
+  const fadeInUp: Variants = {
     hidden: { opacity: 0, y: 60, scale: 0.95 },
-    visible: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.8, ease: "easeOut" } }
+    visible: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.8 } }
   };
 
   return (
@@ -148,9 +149,26 @@ export function LandingPage() {
               <h2 className="text-2xl font-bold mb-6 text-center text-foreground">{isLogin ? 'Welcome back!' : 'Create Account'}</h2>
               <form onSubmit={handleSubmit} className="space-y-4">
                 {!isLogin && (
-                  <div className="space-y-1.5">
-                    <input type="text" required value={name} onChange={e => setName(e.target.value)} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-google-blue text-foreground placeholder:text-muted-foreground shadow-inner transition-shadow" placeholder="Full Name" />
-                  </div>
+                  <>
+                    <div className="space-y-1.5">
+                      <input type="text" required value={name} onChange={e => setName(e.target.value)} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-google-blue text-foreground placeholder:text-muted-foreground shadow-inner transition-shadow" placeholder="Full Name" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <select 
+                        value={role} 
+                        onChange={e => setRole(e.target.value)} 
+                        className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-google-blue text-foreground shadow-inner transition-shadow capitalize cursor-pointer"
+                      >
+                        <option value="student">Student</option>
+                        <option value="researcher">Researcher</option>
+                        <option value="professor">Professor</option>
+                        <option value="reviewer">Reviewer</option>
+                        <option value="academician">Academician</option>
+                        <option value="admin">Admin</option>
+                        <option value="guest">Guest</option>
+                      </select>
+                    </div>
+                  </>
                 )}
                 <div className="space-y-1.5">
                   <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-google-blue text-foreground placeholder:text-muted-foreground shadow-inner transition-shadow" placeholder="Email or Username" />

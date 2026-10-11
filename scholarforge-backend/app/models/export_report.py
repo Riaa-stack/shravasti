@@ -11,6 +11,9 @@ class ReportType(str, enum.Enum):
     trend_report = "trend_report"
     citation_report = "citation_report"
     methodology = "methodology"
+    idea_generation = "idea_generation"
+    difficulty_analysis = "difficulty_analysis"
+    general = "general"
 
 class ExportFormat(str, enum.Enum):
     pdf = "pdf"
@@ -22,7 +25,7 @@ class ExportReport(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
-    report_type: Mapped[ReportType] = mapped_column(Enum(ReportType), nullable=False)
-    format: Mapped[ExportFormat] = mapped_column(Enum(ExportFormat), nullable=False)
+    report_type: Mapped[ReportType] = mapped_column(Enum(ReportType, native_enum=False), nullable=False)
+    format: Mapped[ExportFormat] = mapped_column(Enum(ExportFormat, native_enum=False), nullable=False)
     file_path: Mapped[str] = mapped_column(String(1000), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
