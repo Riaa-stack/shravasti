@@ -19,38 +19,11 @@ class ResearchGapOutput(BaseModel):
     improvement_opportunities: list[str] = Field(description="A list of improvement opportunities")
 
 
-def _ensure_non_empty_gaps(data: dict, paper_label: str = "Research Paper") -> dict:
-    """Guarantees that no research gap field is ever returned empty or null."""
-    if not data.get("limitations"):
-        data["limitations"] = [
-            f"Scope primarily restricted to observational datasets and paradigms evaluated in {paper_label}",
-            "Generalizability across diverse real-world institutions and operating conditions requires validation",
-            "Potential sensitivity to sample distribution shift and unmeasured environmental confounders"
-        ]
-    if not data.get("future_scope"):
-        data["future_scope"] = [
-            "Longitudinal field evaluations to track multi-phase operational robustness",
-            "Cross-domain validation across varied enterprise, healthcare, or industrial settings",
-            "Automated reproducibility benchmarks to stress-test theoretical and empirical claims"
-        ]
-    if not data.get("missing_areas"):
-        data["missing_areas"] = [
-            "Comprehensive investigation of socio-technical and ethical implications",
-            "Granular computational efficiency and runtime latency profiling",
-            "Standardized interoperability and data-exchange protocols across disparate platforms"
-        ]
-    if not data.get("unsolved_problems"):
-        data["unsolved_problems"] = [
-            "Balancing model interpretability with representation capacity in high-stakes domains",
-            "Mitigating algorithmic bias under non-stationary real-world distributions",
-            "Formulating unified causal verification methods for automated decision pipelines"
-        ]
-    if not data.get("improvement_opportunities"):
-        data["improvement_opportunities"] = [
-            "Adoption of hybrid human-in-the-loop workflows to bolster reliability",
-            "Expansion of training/evaluation corpora to incorporate underrepresented cohorts",
-            "Application of adversarial robustness stress-testing prior to production deployment"
-        ]
+def _normalize_gap_fields(data: dict) -> dict:
+    """Normalize output shape without inventing unsupported research gaps."""
+    for field in ("limitations", "future_scope", "missing_areas", "unsolved_problems", "improvement_opportunities"):
+        value = data.get(field)
+        data[field] = value if isinstance(value, list) else []
     return data
 
 
@@ -70,20 +43,7 @@ async def run_research_gap_detection(state: ResearchState) -> dict:
         pid = paper_ids[0]
         chunks = retrieve_chunks(state["user_id"], [pid], n_results=15)
         if not chunks:
-            raw = {
-                "limitations": [],
-                "future_scope": [],
-                "missing_areas": [],
-                "unsolved_problems": [],
-                "improvement_opportunities": []
-            }
-            enriched = _ensure_non_empty_gaps(raw, f"Paper {pid}")
-            enriched["paper_gaps"] = [{
-                "paper_id": str(pid),
-                "title": "Selected Paper",
-                **enriched
-            }]
-            return enriched
+            raise ValueError(f"No indexed text is available for selected paper {pid}.")
 
         context = "\n\n".join([
             f"--- Paper {c['metadata'].get('paper_id')} (Page {c['metadata'].get('page_number')}) ---\n{c['content']}"
@@ -93,16 +53,10 @@ async def run_research_gap_detection(state: ResearchState) -> dict:
             res = await chain.ainvoke({"context": context})
             dumped = res.model_dump()
         except Exception as e:
-            logger.error(f"Research Gap LLM call failed: {e}")
-            dumped = {
-                "limitations": [],
-                "future_scope": [],
-                "missing_areas": [],
-                "unsolved_problems": [],
-                "improvement_opportunities": []
-            }
+            logger.exception("Research Gap LLM call failed for paper %s", pid)
+            raise RuntimeError(f"Research Gap analysis failed for paper {pid}: {e}") from e
 
-        dumped = _ensure_non_empty_gaps(dumped, f"Paper {pid}")
+        dumped = _normalize_gap_fields(dumped)
         dumped["paper_gaps"] = [{
             "paper_id": str(pid),
             "title": "Selected Paper",
@@ -121,13 +75,7 @@ async def run_research_gap_detection(state: ResearchState) -> dict:
     for idx, pid in enumerate(paper_ids):
         chunks = retrieve_chunks(state["user_id"], [pid], n_results=10)
         if not chunks:
-            single = {
-                "limitations": [],
-                "future_scope": [],
-                "missing_areas": [],
-                "unsolved_problems": [],
-                "improvement_opportunities": []
-            }
+            raise ValueError(f"No indexed text is available for selected paper {pid}.")
         else:
             context = "\n\n".join([
                 f"--- Paper {c['metadata'].get('paper_id')} (Page {c['metadata'].get('page_number')}) ---\n{c['content']}"
@@ -137,16 +85,10 @@ async def run_research_gap_detection(state: ResearchState) -> dict:
                 res = await chain.ainvoke({"context": context})
                 single = res.model_dump()
             except Exception as e:
-                logger.error(f"Gap detection failed for paper {pid}: {e}")
-                single = {
-                    "limitations": [],
-                    "future_scope": [],
-                    "missing_areas": [],
-                    "unsolved_problems": [],
-                    "improvement_opportunities": []
-                }
+                logger.exception("Gap detection failed for paper %s", pid)
+                raise RuntimeError(f"Research Gap analysis failed for paper {pid}: {e}") from e
 
-        single = _ensure_non_empty_gaps(single, f"Paper {idx + 1}")
+        single = _normalize_gap_fields(single)
 
         for item in single.get("limitations", []):
             all_limitations.add(item)
@@ -180,4 +122,4 @@ async def run_research_gap_detection(state: ResearchState) -> dict:
         "paper_gaps": paper_gaps,
         "comparative_analysis": comparative_analysis
     }
-    return _ensure_non_empty_gaps(combined_res, "Cross-Paper Batch")
+    return _normalize_gap_fields(combined_res)

@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # Postgres
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
-    POSTGRES_DB: str = "scholarforge"
+    POSTGRES_DB: str = "scholarforge_new"
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "Riya@9359"
 

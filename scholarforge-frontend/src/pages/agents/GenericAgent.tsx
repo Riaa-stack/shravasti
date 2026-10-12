@@ -607,7 +607,10 @@ export function GenericAgent() {
           </div>
         )}
 
-        {/* Other top-level synthesis fields */}
+        {/* Render extra top-level fields for other agents. For Methodology,
+            the top-level algorithm/model/dataset fields repeat the combined
+            analysis already represented by the per-paper cards, so hide them
+            when per-paper results exist. Keep the comparison card above. */}
         {Object.entries(parsedResult).map(([key, value]) => {
           if (
             [
@@ -619,6 +622,13 @@ export function GenericAgent() {
               'comparative_analysis',
               'comparative_review',
             ].includes(key)
+          ) {
+            return null;
+          }
+
+          if (
+            location.pathname === '/agents/methodology' &&
+            paperItems.length > 0
           ) {
             return null;
           }

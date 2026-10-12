@@ -176,21 +176,27 @@ async def get_literature_review_result(
         saved_ids = normalize_paper_ids(row.paper_ids)
 
         if saved_ids == paper_ids:
+            # Older records did not store paper-specific analyses. Never reuse
+            # their aggregate summary as if it belonged to every selected paper.
+            if len(paper_ids) > 1 and not row.paper_reviews:
+                continue
+            paper_reviews = row.paper_reviews or [{
+                "paper_id": paper_ids[0],
+                "title": "Selected Paper",
+                "summary": row.summary,
+                "key_findings": row.key_findings,
+                "contributions": row.contributions,
+                "methodology": "",
+                "limitations": [],
+                "research_gaps": [],
+                "future_directions": [],
+            }]
             res = normalize_result({
                 "summary": row.summary,
                 "key_findings": row.key_findings,
                 "contributions": row.contributions,
                 "comparative_review": row.comparative_review,
-                "paper_reviews": [
-                    {
-                        "paper_id": pid,
-                        "title": f"Paper {i + 1}",
-                        "summary": row.summary,
-                        "key_findings": row.key_findings,
-                        "contributions": row.contributions
-                    }
-                    for i, pid in enumerate(paper_ids)
-                ]
+                "paper_reviews": paper_reviews,
             })
             set_session_cache(current_user.id, "literature-review", paper_ids, res)
             return {"result": res}
@@ -210,11 +216,15 @@ async def generate_literature_review(
 
     paper_ids = normalize_paper_ids(request.paper_ids)
 
-    await verify_papers_exist(
+    papers = await verify_papers_exist(
         session,
         str(current_user.id),
         paper_ids
     )
+    paper_titles = {
+            str(p.id): (p.title or f"Paper {i + 1}")
+            for i, p in enumerate(papers)
+        }
 
     cached = get_session_cache(current_user.id, "literature-review", paper_ids)
     if cached is not None:
@@ -240,27 +250,30 @@ async def generate_literature_review(
         saved_ids = normalize_paper_ids(row.paper_ids)
 
         if saved_ids == paper_ids:
+            if len(paper_ids) > 1 and not row.paper_reviews:
+                # Legacy multi-paper record has only aggregate fields. Regenerate
+                # rather than presenting the same analysis for every paper.
+                continue
+            paper_reviews = row.paper_reviews or [{
+                "paper_id": paper_ids[0],
+                "title": paper_titles.get(paper_ids[0], "Selected Paper"),
+                "summary": row.summary,
+                "key_findings": row.key_findings,
+                "contributions": row.contributions,
+                "methodology": "",
+                "limitations": [],
+                "research_gaps": [],
+                "future_directions": [],
+            }]
             res = normalize_result({
                 "summary": row.summary,
                 "key_findings": row.key_findings,
                 "contributions": row.contributions,
                 "comparative_review": row.comparative_review,
-                "paper_reviews": [
-                    {
-                        "paper_id": pid,
-                        "title": f"Paper {i + 1}",
-                        "summary": row.summary,
-                        "key_findings": row.key_findings,
-                        "contributions": row.contributions
-                    }
-                    for i, pid in enumerate(paper_ids)
-                ]
+                "paper_reviews": paper_reviews,
             })
             set_session_cache(current_user.id, "literature-review", paper_ids, res)
-            return {
-                "id": str(row.id),
-                "result": res
-            }
+            return {"id": str(row.id), "result": res}
 
     # ------------------------------------------------------------------------
     # RUN AGENT ONLY IF NO SAVED RESULT EXISTS
@@ -269,6 +282,7 @@ async def generate_literature_review(
     state = {
         "user_id": str(current_user.id),
         "paper_ids": paper_ids,
+        "paper_titles": paper_titles,
         "task_type": "literature_review",
         "query": None,
         "chat_history": None,
@@ -298,7 +312,8 @@ async def generate_literature_review(
         summary=result.get("summary"),
         key_findings=result.get("key_findings", []),
         contributions=result.get("contributions", []),
-        comparative_review=result.get("comparative_review")
+        comparative_review=result.get("comparative_review"),
+        paper_reviews=result.get("paper_reviews", [])
     )
 
     session.add(lr)
@@ -366,6 +381,54 @@ async def get_methodology_result(
             })
             set_session_cache(current_user.id, "methodology", paper_ids, res)
             return {"result": res}
+
+    if len(paper_ids) > 1:
+        rows_result = await session.execute(
+            select(MethodologyAnalysis)
+            .where(MethodologyAnalysis.paper_id.in_([uuid.UUID(pid) for pid in paper_ids]))
+            .order_by(MethodologyAnalysis.created_at.desc())
+        )
+        latest_by_id = {}
+        for row in rows_result.scalars().all():
+            latest_by_id.setdefault(str(row.paper_id), row)
+        if all(pid in latest_by_id for pid in paper_ids):
+            # Older versions wrote the same combined analysis into every paper row.
+            # If every paper's persisted fields are identical, treat that batch as
+            # stale and require regeneration instead of showing a false comparison.
+            signatures = {
+                (tuple(latest_by_id[pid].algorithms or []), tuple(latest_by_id[pid].models or []),
+                 tuple(latest_by_id[pid].datasets or []), tuple(latest_by_id[pid].evaluation_metrics or []),
+                 latest_by_id[pid].experimental_setup or "")
+                for pid in paper_ids
+            }
+            if len(signatures) > 1:
+                paper_analyses = []
+                all_algorithms, all_models, all_datasets, all_metrics = set(), set(), set(), set()
+                setup_summaries = []
+                for idx, pid in enumerate(paper_ids, start=1):
+                    row = latest_by_id[pid]
+                    item = {
+                        "paper_id": pid, "title": f"Paper {idx}",
+                        "algorithms": row.algorithms or [], "models": row.models or [],
+                        "datasets": row.datasets or [], "evaluation_metrics": row.evaluation_metrics or [],
+                        "experimental_setup": row.experimental_setup or "",
+                    }
+                    paper_analyses.append(item)
+                    all_algorithms.update(item["algorithms"])
+                    all_models.update(item["models"])
+                    all_datasets.update(item["datasets"])
+                    all_metrics.update(item["evaluation_metrics"])
+                    if item["experimental_setup"]:
+                        setup_summaries.append(f"{item['title']}: {item['experimental_setup']}")
+                res = normalize_result({
+                    "algorithms": sorted(all_algorithms), "models": sorted(all_models),
+                    "datasets": sorted(all_datasets), "evaluation_metrics": sorted(all_metrics),
+                    "experimental_setup": "\n\n".join(setup_summaries),
+                    "paper_analyses": paper_analyses,
+                    "comparative_analysis": f"Comparative methodology synthesis across {len(paper_ids)} selected papers.\n\n" + "\n".join(setup_summaries),
+                })
+                set_session_cache(current_user.id, "methodology", paper_ids, res)
+                return {"result": res}
 
     raise HTTPException(
         status_code=404,
@@ -456,22 +519,23 @@ async def extract_methodology(
     # ------------------------------------------------------------------------
 
     try:
+        analyses_by_id = {
+            str(item.get("paper_id")): item
+            for item in result.get("paper_analyses", [])
+            if isinstance(item, dict) and item.get("paper_id")
+        }
         for paper_id in paper_ids:
+            paper_result = analyses_by_id.get(paper_id)
+            if not paper_result:
+                raise ValueError(f"No individual methodology result was returned for paper {paper_id}.")
             ma = MethodologyAnalysis(
                 paper_id=uuid.UUID(paper_id),
-                algorithms=result.get("algorithms", []),
-                models=result.get("models", []),
-                datasets=result.get("datasets", []),
-                evaluation_metrics=result.get(
-                    "evaluation_metrics",
-                    []
-                ),
-                experimental_setup=result.get(
-                    "experimental_setup",
-                    ""
-                )
+                algorithms=paper_result.get("algorithms", []),
+                models=paper_result.get("models", []),
+                datasets=paper_result.get("datasets", []),
+                evaluation_metrics=paper_result.get("evaluation_metrics", []),
+                experimental_setup=paper_result.get("experimental_setup", "")
             )
-
             session.add(ma)
 
         await session.commit()
@@ -544,6 +608,45 @@ async def get_research_gap_result(
             })
             set_session_cache(current_user.id, "research-gap", paper_ids, res)
             return {"result": res}
+
+    if len(paper_ids) > 1:
+        rows_result = await session.execute(
+            select(ResearchGap)
+            .where(ResearchGap.paper_id.in_([uuid.UUID(pid) for pid in paper_ids]))
+            .order_by(ResearchGap.created_at.desc())
+        )
+        latest_by_id = {}
+        for row in rows_result.scalars().all():
+            latest_by_id.setdefault(str(row.paper_id), row)
+        if all(pid in latest_by_id for pid in paper_ids):
+            # Old batch saves copied aggregate gap lists into each individual row.
+            # Do not mistake identical legacy rows for separate paper analyses.
+            signatures = {
+                (tuple(latest_by_id[pid].limitations or []), tuple(latest_by_id[pid].future_scope or []),
+                 tuple(latest_by_id[pid].missing_areas or []), tuple(latest_by_id[pid].unsolved_problems or []),
+                 tuple(latest_by_id[pid].improvement_opportunities or []))
+                for pid in paper_ids
+            }
+            if len(signatures) > 1:
+                paper_gaps = []
+                combined = {key: set() for key in ("limitations", "future_scope", "missing_areas", "unsolved_problems", "improvement_opportunities")}
+                for idx, pid in enumerate(paper_ids, start=1):
+                    row = latest_by_id[pid]
+                    item = {
+                        "paper_id": pid, "title": f"Paper {idx}",
+                        "limitations": row.limitations or [], "future_scope": row.future_scope or [],
+                        "missing_areas": row.missing_areas or [], "unsolved_problems": row.unsolved_problems or [],
+                        "improvement_opportunities": row.improvement_opportunities or [],
+                    }
+                    paper_gaps.append(item)
+                    for key in combined:
+                        combined[key].update(item[key])
+                res = {key: sorted(values) for key, values in combined.items()}
+                res["paper_gaps"] = paper_gaps
+                res["comparative_analysis"] = f"Research-gap results reconstructed from the individual saved analyses of {len(paper_ids)} papers. Review the side-by-side entries for paper-specific gaps."
+                res = normalize_result(res)
+                set_session_cache(current_user.id, "research-gap", paper_ids, res)
+                return {"result": res}
 
     raise HTTPException(
         status_code=404,
@@ -634,31 +737,23 @@ async def detect_research_gap(
     # ------------------------------------------------------------------------
 
     try:
+        gaps_by_id = {
+            str(item.get("paper_id")): item
+            for item in result.get("paper_gaps", [])
+            if isinstance(item, dict) and item.get("paper_id")
+        }
         for paper_id in paper_ids:
+            paper_result = gaps_by_id.get(paper_id)
+            if not paper_result:
+                raise ValueError(f"No individual research-gap result was returned for paper {paper_id}.")
             rg = ResearchGap(
                 paper_id=uuid.UUID(paper_id),
-                limitations=result.get(
-                    "limitations",
-                    []
-                ),
-                future_scope=result.get(
-                    "future_scope",
-                    []
-                ),
-                missing_areas=result.get(
-                    "missing_areas",
-                    []
-                ),
-                unsolved_problems=result.get(
-                    "unsolved_problems",
-                    []
-                ),
-                improvement_opportunities=result.get(
-                    "improvement_opportunities",
-                    []
-                )
+                limitations=paper_result.get("limitations", []),
+                future_scope=paper_result.get("future_scope", []),
+                missing_areas=paper_result.get("missing_areas", []),
+                unsolved_problems=paper_result.get("unsolved_problems", []),
+                improvement_opportunities=paper_result.get("improvement_opportunities", [])
             )
-
             session.add(rg)
 
         await session.commit()
@@ -896,13 +991,9 @@ async def get_idea_result(
         if row.description:
             project_ideas.append(row.description)
 
-    res = {
-        "project_ideas": project_ideas,
-        "paper_ideas": [
-            {"paper_id": pid, "title": f"Paper {i+1}", "ideas": project_ideas}
-            for i, pid in enumerate(paper_ids)
-        ]
-    }
+    # These are ideas generated from the selected corpus as a whole, not
+    # independently verified ideas for every individual paper.
+    res = {"project_ideas": project_ideas}
     set_session_cache(current_user.id, "idea", paper_ids, res)
     return {"result": res}
 
@@ -958,13 +1049,7 @@ async def generate_ideas(
             for row in reversed(matching_rows)
             if row.description
         ]
-        res = {
-            "project_ideas": project_ideas,
-            "paper_ideas": [
-                {"paper_id": pid, "title": f"Paper {i+1}", "ideas": project_ideas}
-                for i, pid in enumerate(paper_ids)
-            ]
-        }
+        res = {"project_ideas": project_ideas}
         set_session_cache(current_user.id, "idea", paper_ids, res)
         return {"result": res}
 
@@ -1084,9 +1169,32 @@ async def get_citation_result(
             set_session_cache(current_user.id, "citation", paper_ids, res)
             return {"result": res}
 
+    if len(paper_ids) > 1:
+        citation_result = await session.execute(
+            select(Citation)
+            .where(Citation.paper_id.in_([uuid.UUID(pid) for pid in paper_ids]))
+            .order_by(Citation.created_at.desc())
+        )
+        style_by_paper = {}
+        for row in citation_result.scalars().all():
+            pid = str(row.paper_id)
+            style = row.style.value if hasattr(row.style, "value") else str(row.style)
+            style_by_paper.setdefault(pid, {}).setdefault(style, row.formatted_text)
+        if all(pid in style_by_paper for pid in paper_ids):
+            paper_citations = []
+            for idx, pid in enumerate(paper_ids, start=1):
+                paper_citations.append({"paper_id": pid, "title": f"Paper {idx}", **style_by_paper[pid]})
+            first = paper_citations[0]
+            res = {style: first.get(style, "") for style in ("ieee", "apa", "mla", "harvard")}
+            res["paper_citations"] = paper_citations
+            res["comparative_analysis"] = f"Citation formats reconstructed for {len(paper_citations)} selected papers."
+            res = normalize_result(res)
+            set_session_cache(current_user.id, "citation", paper_ids, res)
+            return {"result": res}
+
     raise HTTPException(
         status_code=404,
-        detail="No saved citations found for this paper."
+        detail="No saved citations found for the selected papers."
     )
 
 
@@ -1225,6 +1333,33 @@ async def get_difficulty_result(
             set_session_cache(current_user.id, "difficulty", paper_ids, res)
             return {"result": res}
 
+    if len(paper_ids) > 1:
+        paper_result = await session.execute(
+            select(Paper).where(
+                Paper.id.in_([uuid.UUID(pid) for pid in paper_ids]),
+                Paper.user_id == current_user.id,
+            )
+        )
+        papers_by_id = {str(paper.id): paper for paper in paper_result.scalars().all()}
+        if all(pid in papers_by_id and papers_by_id[pid].difficulty_level for pid in paper_ids):
+            paper_difficulties = []
+            for idx, pid in enumerate(paper_ids, start=1):
+                paper = papers_by_id[pid]
+                level = paper.difficulty_level.value if hasattr(paper.difficulty_level, "value") else str(paper.difficulty_level)
+                paper_difficulties.append({
+                    "paper_id": pid, "title": paper.title or f"Paper {idx}",
+                    "difficulty": level,
+                    "rationale": "The saved record contains the predicted level; the original rationale was not persisted.",
+                })
+            res = {
+                "difficulty": paper_difficulties[0]["difficulty"],
+                "rationale": "Individual saved difficulty levels are shown for each selected paper.",
+                "paper_difficulties": paper_difficulties,
+                "comparative_analysis": " | ".join(f"{item['title']}: {item['difficulty'].upper()}" for item in paper_difficulties),
+            }
+            set_session_cache(current_user.id, "difficulty", paper_ids, res)
+            return {"result": res}
+
     raise HTTPException(
         status_code=404,
         detail="No saved difficulty result found for these papers."
@@ -1250,7 +1385,7 @@ async def evaluate_difficulty(
     if cached is not None:
         return {"result": cached}
 
-    if paper_ids:
+    if len(paper_ids) == 1:
         paper_result = await session.execute(
             select(Paper).where(
                 Paper.id == uuid.UUID(paper_ids[0]),
@@ -1302,30 +1437,28 @@ async def evaluate_difficulty(
     # SAVE
     # ------------------------------------------------------------------------
 
-    if paper_ids and "difficulty" in result:
+    if paper_ids and result.get("paper_difficulties"):
 
         from app.models.paper import DifficultyLevel
 
         try:
-            difficulty = DifficultyLevel(
-                result["difficulty"]
-            )
-
+            difficulties_by_id = {
+                str(item.get("paper_id")): item
+                for item in result.get("paper_difficulties", [])
+                if isinstance(item, dict) and item.get("paper_id")
+            }
             for paper_id in paper_ids:
-
                 paper_result = await session.execute(
                     select(Paper).where(
                         Paper.id == uuid.UUID(paper_id),
                         Paper.user_id == current_user.id
                     )
                 )
-
                 paper = paper_result.scalar_one_or_none()
-
-                if paper:
-                    paper.difficulty_level = difficulty
+                individual = difficulties_by_id.get(paper_id)
+                if paper and individual and individual.get("difficulty"):
+                    paper.difficulty_level = DifficultyLevel(individual["difficulty"])
                     session.add(paper)
-
             await session.commit()
 
         except Exception as e:

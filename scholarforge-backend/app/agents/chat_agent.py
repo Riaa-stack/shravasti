@@ -27,12 +27,34 @@ async def run_chat(state: ResearchState) -> dict:
     query_embedding = embedding_model.encode(query).tolist()
     
     # 2. Retrieve top K chunks using the embedding
-    chunks = retrieve_chunks(
-        user_id=state["user_id"],
-        paper_ids=state["paper_ids"],
-        query_embedding=query_embedding,
-        n_results=10
-    )
+    paper_ids = [str(pid) for pid in state.get("paper_ids", [])]
+    if not paper_ids:
+        raise ValueError("Chat requires at least one selected paper.")
+
+    # Retrieve a small, independent set for each selected paper. A single global
+    # top-k search can otherwise let one paper dominate the answer context.
+    chunks = []
+    seen = set()
+    per_paper_limit = max(3, 10 // len(paper_ids))
+    for paper_id in paper_ids:
+        paper_chunks = retrieve_chunks(
+            user_id=state["user_id"],
+            paper_ids=[paper_id],
+            query_embedding=query_embedding,
+            n_results=per_paper_limit,
+        )
+        for chunk in paper_chunks:
+            metadata = chunk.get("metadata") or {}
+            actual_id = str(metadata.get("paper_id") or paper_id)
+            if actual_id != paper_id:
+                logger.warning("Ignoring cross-paper chat chunk expected=%s got=%s", paper_id, actual_id)
+                continue
+            key = (actual_id, metadata.get("page_number"), chunk.get("content"))
+            if key not in seen:
+                seen.add(key)
+                chunks.append(chunk)
+    if not chunks:
+        raise ValueError("No indexed text could be retrieved from the selected papers.")
     
     context = "\n\n".join([f"--- Source (Paper ID: {c['metadata'].get('paper_id')}, Page: {c['metadata'].get('page_number')}) ---\n{c['content']}" for c in chunks])
     
@@ -67,18 +89,8 @@ async def run_chat(state: ResearchState) -> dict:
         result = await llm.ainvoke([HumanMessage(content=formatted_prompt)])
         response_text = result.content
     except Exception as e:
-        logger.error("Chat LLM invocation failed (e.g. credit limit or rate limit): %s", e)
-        if chunks:
-            response_text = (
-                f"**Note:** AI generation service is temporarily at its credit limit. "
-                f"Here are the most relevant findings extracted directly from your papers for query: *'{query}'*:\n\n"
-                + "\n\n".join([f"> {c['content'][:300]}..." for c in chunks[:3]])
-            )
-        else:
-            response_text = (
-                f"Could not generate an AI response for query: *'{query}'* because OpenRouter credits are currently depleted. "
-                "Please add credits at https://openrouter.ai/settings/credits or use a fresh API key."
-            )
+        logger.exception("Chat LLM invocation failed")
+        raise RuntimeError(f"Could not generate a response from the selected papers: {e}") from e
     
     return {
         "response": response_text,

@@ -1,413 +1,136 @@
+"""Paper-aware literature review and comparative synthesis agent.
+
+Each paper is analyzed independently. A separate synthesis call compares the
+individual reviews, preventing the same aggregate text from being copied into
+all paper cards.
+"""
 import logging
 from typing import Optional
 
 from pydantic import BaseModel, Field
+from langchain_core.prompts import PromptTemplate
 
 from app.core.config import settings
 from app.agents.llm_client import get_llm
 from app.agents.graph import ResearchState
 from app.agents.prompts.literature_review_prompts import LITERATURE_REVIEW_PROMPT
 from app.db.chroma import retrieve_chunks
-from langchain_core.prompts import PromptTemplate
 
 logger = logging.getLogger(__name__)
 
 
-class LiteratureReviewOutput(BaseModel):
-    summary: str = Field(
-        description=(
-            "A comprehensive synthesis of ALL selected papers. "
-            "Every selected paper must be represented in the summary."
-        )
-    )
-
-    key_findings: list[str] = Field(
-        description=(
-            "Key findings extracted from ALL selected papers. "
-            "Do not omit findings from any selected paper."
-        )
-    )
-
-    contributions: list[str] = Field(
-        description=(
-            "Primary contributions of ALL selected papers. "
-            "Do not omit contributions from any selected paper."
-        )
-    )
-
-    comparative_review: Optional[str] = Field(
-        default=None,
-        description=(
-            "A detailed comparative review when two or more papers are selected. "
-            "Compare the papers by topic, objectives, methodology, findings, "
-            "contributions, strengths, limitations, and research direction. "
-            "Must not be null when multiple papers are provided."
-        ),
-    )
+class SinglePaperReview(BaseModel):
+    summary: str = Field(description="Summary based only on this paper's supplied text")
+    methodology: str = Field(description="Methodology or approach described in this paper; state when not available")
+    key_findings: list[str] = Field(description="Findings supported by this paper's supplied text")
+    contributions: list[str] = Field(description="Contributions supported by this paper's supplied text")
+    limitations: list[str] = Field(description="Limitations explicitly stated or directly supported by this paper")
+    research_gaps: list[str] = Field(description="Research gaps supported by this paper's supplied text")
+    future_directions: list[str] = Field(description="Future work stated or supported by this paper's supplied text")
 
 
-def _group_chunks_by_paper(chunks: list[dict]) -> dict[str, list[dict]]:
-    """
-    Group retrieved Chroma chunks by paper_id.
+class LiteratureReviewSynthesis(BaseModel):
+    summary: str = Field(description="Cross-paper synthesis that accurately represents all individual reviews")
+    key_findings: list[str] = Field(description="Synthesis of findings, clearly attributing differences to papers")
+    contributions: list[str] = Field(description="Combined contributions without misattributing them")
+    comparative_review: Optional[str] = Field(default=None, description="Evidence-based comparison of all selected papers")
 
-    This prevents the Literature Review agent from treating the entire
-    retrieval result as one undifferentiated document.
-    """
 
-    grouped: dict[str, list[dict]] = {}
-
+def _paper_context(chunks: list[dict], paper_id: str, index: int) -> str:
+    sections = []
+    seen: set[tuple[str, str]] = set()
     for chunk in chunks:
         metadata = chunk.get("metadata") or {}
-
-        paper_id = metadata.get("paper_id")
-
-        if not paper_id:
-            paper_id = "unknown"
-
-        grouped.setdefault(str(paper_id), []).append(chunk)
-
-    return grouped
-
-
-def _build_balanced_context(
-    chunks: list[dict],
-    paper_ids: list[str],
-) -> str:
-    """
-    Build a paper-aware context.
-
-    The old implementation simply joined the top N chunks globally.
-    That can cause one paper to dominate the context.
-
-    This implementation explicitly separates every selected paper.
-    """
-
-    grouped_chunks = _group_chunks_by_paper(chunks)
-
-    sections: list[str] = []
-
-    for index, paper_id in enumerate(paper_ids, start=1):
-
-        paper_chunks = grouped_chunks.get(str(paper_id), [])
-
-        sections.append(
-            f"\n{'=' * 80}\n"
-            f"PAPER {index}\n"
-            f"PAPER ID: {paper_id}\n"
-            f"{'=' * 80}\n"
-        )
-
-        if not paper_chunks:
-            sections.append(
-                "No retrieved text chunks were available for this paper."
-            )
+        content = str(chunk.get("content") or "").strip()
+        if not content:
             continue
-
-        # Remove accidental duplicate chunks while preserving order.
-        seen: set[tuple] = set()
-
-        for chunk in paper_chunks:
-            metadata = chunk.get("metadata") or {}
-            content = (chunk.get("content") or "").strip()
-
-            if not content:
-                continue
-
-            page_number = metadata.get("page_number")
-
-            dedup_key = (
-                str(page_number),
-                content,
-            )
-
-            if dedup_key in seen:
-                continue
-
-            seen.add(dedup_key)
-
-            sections.append(
-                f"\n--- Paper {index} | "
-                f"Page {page_number if page_number is not None else 'Unknown'} ---\n"
-                f"{content}"
-            )
-
-    return "\n".join(sections)
+        # Retrieval for a paper should be scoped to its ID. Still guard against
+        # accidental cross-paper chunks if the vector store returns them.
+        chunk_paper_id = str(metadata.get("paper_id") or paper_id)
+        if chunk_paper_id != str(paper_id):
+            logger.warning("Ignoring cross-paper chunk: expected=%s got=%s", paper_id, chunk_paper_id)
+            continue
+        page = str(metadata.get("page_number") or "Unknown")
+        key = (page, content)
+        if key in seen:
+            continue
+        seen.add(key)
+        sections.append(f"--- Paper {index} | Page {page} ---\n{content}")
+    if not sections:
+        raise ValueError(f"No usable text chunks were retrieved for selected paper {paper_id}.")
+    return "\n\n".join(sections)
 
 
 async def run_literature_review(state: ResearchState) -> dict:
-    """
-    Run the Literature Review agent for ALL selected papers.
-
-    Important:
-    - state["paper_ids"] may contain one or many paper IDs.
-    - Every selected paper is explicitly represented in the prompt.
-    - When multiple papers are selected, comparative_review is required.
-    """
-
-    paper_ids = [str(paper_id) for paper_id in state.get("paper_ids", [])]
-
+    paper_ids = [str(pid) for pid in state.get("paper_ids", [])]
     user_id = str(state["user_id"])
-
-    logger.info(
-        "Running Literature Review Agent | user_id=%s | paper_count=%d | paper_ids=%s",
-        user_id,
-        len(paper_ids),
-        paper_ids,
-    )
+    paper_titles = state.get("paper_titles") or {}
 
     if not paper_ids:
-        raise ValueError(
-            "Literature Review requires at least one selected paper."
+        raise ValueError("Literature Review requires at least one selected paper.")
+
+    logger.info("Running paper-specific literature review for user=%s papers=%s", user_id, paper_ids)
+    llm = get_llm(settings.LLM_MODEL_LITERATURE_REVIEW)
+    single_chain = llm.with_structured_output(SinglePaperReview)
+
+    reviews = []
+    for index, paper_id in enumerate(paper_ids, start=1):
+        chunks = retrieve_chunks(user_id, [paper_id], n_results=20)
+        context = _paper_context(chunks, paper_id, index)
+        title = str(paper_titles.get(paper_id) or f"Paper {index}")
+        prompt = PromptTemplate(
+            template=LITERATURE_REVIEW_PROMPT,
+            input_variables=["title", "paper_id", "context"],
         )
+        result = await (prompt | single_chain).ainvoke({
+            "title": title,
+            "paper_id": paper_id,
+            "context": context,
+        })
+        review = result.model_dump()
+        reviews.append({"paper_id": paper_id, "title": title, **review})
 
-    # ------------------------------------------------------------------
-    # RETRIEVE CHUNKS
-    # ------------------------------------------------------------------
-    #
-    # Keep the retrieval call compatible with the existing ChromaDB
-    # implementation.
-    #
-    # The important difference is that the returned chunks are now
-    # explicitly grouped by paper before being sent to the LLM.
-    # ------------------------------------------------------------------
-
-    retrieval_count = max(20, len(paper_ids) * 20)
-
-    chunks = retrieve_chunks(
-        user_id,
-        paper_ids,
-        n_results=retrieval_count,
-    )
-
-    if not chunks:
-        raise ValueError(
-            "No content could be retrieved from the selected papers."
-        )
-
-    logger.info(
-        "Literature Review retrieval returned %d chunks for %d selected papers.",
-        len(chunks),
-        len(paper_ids),
-    )
-
-    # ------------------------------------------------------------------
-    # BUILD PAPER-AWARE CONTEXT
-    # ------------------------------------------------------------------
-
-    context = _build_balanced_context(
-        chunks=chunks,
-        paper_ids=paper_ids,
-    )
-
-    # ------------------------------------------------------------------
-    # EXPLICIT MULTI-PAPER INSTRUCTIONS
-    # ------------------------------------------------------------------
-
-    if len(paper_ids) == 1:
-
-        analysis_instruction = """
-You are analyzing ONE selected research paper.
-
-Analyze the complete available evidence for this paper.
-
-Generate:
-1. A comprehensive summary.
-2. Key findings.
-3. Primary contributions.
-
-Because only one paper is selected, comparative_review may be null.
-"""
-
-    else:
-
-        analysis_instruction = f"""
-You are analyzing {len(paper_ids)} SELECTED RESEARCH PAPERS.
-
-THIS IS A MULTI-PAPER LITERATURE REVIEW.
-
-You MUST analyze EVERY paper listed in the context.
-
-Do NOT analyze only the first paper.
-
-For EACH paper:
-- Identify its main topic/objective.
-- Identify its methodology or approach when available.
-- Identify its important findings.
-- Identify its primary contributions.
-- Identify relevant limitations or research gaps when supported by the text.
-
-Then synthesize the papers together.
-
-The final response MUST contain:
-
-1. SUMMARY
-   Provide a comprehensive synthesis covering ALL selected papers.
-
-2. KEY FINDINGS
-   Include findings from ALL selected papers.
-   Clearly distinguish findings when necessary.
-
-3. CONTRIBUTIONS
-   Include contributions from ALL selected papers.
-
-4. COMPARATIVE REVIEW
-   Because multiple papers were selected, comparative_review MUST NOT be null.
-
-   Compare the selected papers using the available evidence, including:
-   - research objectives
-   - research topics
-   - methodologies/approaches
-   - datasets or study populations when available
-   - major findings
-   - contributions
-   - similarities
-   - differences
-   - limitations
-   - research gaps/future directions
-
-IMPORTANT:
-- Never silently ignore a selected paper.
-- Do not produce a review based only on PAPER 1.
-- If information is unavailable for a particular comparison category,
-  explicitly say that the available paper text does not provide enough
-  information instead of inventing details.
-- Do not use outside knowledge.
-- Use ONLY the supplied paper context.
-"""
-
-    # ------------------------------------------------------------------
-    # COMBINE EXISTING PROJECT PROMPT + MULTI-PAPER INSTRUCTIONS
-    # ------------------------------------------------------------------
-
-    final_template = f"""
-{LITERATURE_REVIEW_PROMPT}
-
-{analysis_instruction}
-
-The selected paper IDs are:
-
-{chr(10).join(f"- {paper_id}" for paper_id in paper_ids)}
-
-Below is the retrieved content.
-
-You MUST treat the boundaries marked PAPER 1, PAPER 2, etc.
-as separate research papers.
-
--------------------- START PAPER CONTEXT --------------------
-
-{{context}}
-
---------------------- END PAPER CONTEXT ---------------------
-
-Return a structured response matching the required schema exactly.
-"""
-
-    prompt = PromptTemplate(
-        template=final_template,
-        input_variables=["context"],
-    )
-
-    # ------------------------------------------------------------------
-    # LLM
-    # ------------------------------------------------------------------
-
-    llm = get_llm(
-        settings.LLM_MODEL_LITERATURE_REVIEW
-    )
-
-    structured_llm = llm.with_structured_output(
-        LiteratureReviewOutput
-    )
-
-    chain = prompt | structured_llm
-
-    logger.info(
-        "Sending Literature Review request to LLM for %d paper(s).",
-        len(paper_ids),
-    )
-
-    try:
-        result = await chain.ainvoke(
-            {
-                "context": context,
-            }
-        )
-        output = result.model_dump()
-    except Exception as e:
-        logger.error("Literature review LLM call failed (e.g. credit limit or rate limit): %s", e)
-        output = {
-            "summary": (
-                f"Comprehensive synthesis across {len(paper_ids)} selected research publication(s). "
-                "Synthesizes core theoretical formulations, empirical evaluation paradigms, and domain-specific benchmarks."
-            ),
-            "key_findings": [
-                "Demonstrates measurable performance gains across evaluated benchmark distributions.",
-                "Explores architectural trade-offs between model complexity, inference latency, and computational footprint.",
-                "Emphasizes the critical role of data standardization, domain alignment, and reproducible validation frameworks."
-            ],
-            "contributions": [
-                "Introduces targeted algorithmic techniques and structured workflows to address limitations in prior baselines.",
-                "Provides comprehensive comparative analysis across key domain benchmarks.",
-                "Formulates actionable design guidelines and theoretical foundations for downstream applications."
-            ],
-            "comparative_review": (
-                f"### Cross-Paper Comparative Review ({len(paper_ids)} Papers)\n\n"
-                f"- **Methodological Foundations**: Across the {len(paper_ids)} investigated works, the authors prioritize robust empirical grounding, combining rigorous statistical baselines with specialized architectural paradigms.\n"
-                "- **Evaluation & Impact**: Empirical metrics highlight complementary strengths in scalability, error resilience, and task-specific generalizability."
-            )
+    if len(reviews) == 1:
+        only = reviews[0]
+        return {
+            "summary": only["summary"],
+            "key_findings": only["key_findings"],
+            "contributions": only["contributions"],
+            "comparative_review": None,
+            "paper_reviews": reviews,
         }
 
-    # ------------------------------------------------------------------
-    # VALIDATE & ENFORCE NON-EMPTY MULTI-PAPER RESULT
-    # ------------------------------------------------------------------
-
-    # Guarantee non-empty summary, findings, and contributions
-    if not output.get("summary") or len(str(output.get("summary")).strip()) < 20:
-        output["summary"] = (
-            f"Comprehensive literature synthesis across {len(paper_ids)} selected research work(s). "
-            "Synthesizes the core problem formulations, state-of-the-art methodologies, "
-            "and primary empirical and theoretical implications across the study."
-        )
-
-    if not output.get("key_findings"):
-        output["key_findings"] = [
-            "Demonstrates significant advancements in domain understanding through systematic empirical evaluation.",
-            "Identifies core methodological trade-offs between model complexity, computational overhead, and practical applicability.",
-            "Highlights the necessity of robust data governance, reproducible benchmarking, and domain-aligned validation."
-        ]
-
-    if not output.get("contributions"):
-        output["contributions"] = [
-            "Proposes a systematic analytical and conceptual framework advancing the current state-of-the-art.",
-            "Provides comprehensive empirical or theoretical synthesis clarifying conflicting prior results.",
-            "Outlines actionable guidelines and architectural blueprints for subsequent research and deployment."
-        ]
-
-    if len(paper_ids) > 1:
-        comparative_review = output.get("comparative_review")
-        if not comparative_review or len(str(comparative_review).strip()) < 20:
-            output["comparative_review"] = (
-                f"### Cross-Paper Comparative Synthesis ({len(paper_ids)} Papers)\n\n"
-                f"- **Methodological Paradigms**: The analyzed papers demonstrate complementary approaches, balancing foundational theoretical formulation with empirical verification.\n"
-                f"- **Findings Divergence**: While all papers converge on the importance of robust evaluation, they explore distinct dimensions of the research space.\n"
-                f"- **Integrated Contributions**: Collectively, these works establish a cohesive roadmap for both theoretical expansion and operational implementation."
-            )
-
-    # Build per-paper reviews for side-by-side display
-    paper_reviews = []
-    for idx, pid in enumerate(paper_ids):
-        paper_reviews.append({
-            "paper_id": str(pid),
-            "title": f"Paper {idx + 1}",
-            "summary": output.get("summary", ""),
-            "key_findings": output.get("key_findings", []),
-            "contributions": output.get("contributions", [])
-        })
-    output["paper_reviews"] = paper_reviews
-
-    logger.info(
-        "Literature Review completed successfully for paper_ids=%s",
-        paper_ids,
+    synthesis_input = "\n\n".join(
+        f"PAPER {i}: {review['title']} (ID: {review['paper_id']})\n"
+        f"SUMMARY: {review['summary']}\n"
+        f"METHODOLOGY: {review['methodology']}\n"
+        f"KEY FINDINGS: {review['key_findings']}\n"
+        f"CONTRIBUTIONS: {review['contributions']}\n"
+        f"LIMITATIONS: {review['limitations']}\n"
+        f"RESEARCH GAPS: {review['research_gaps']}\n"
+        f"FUTURE DIRECTIONS: {review['future_directions']}"
+        for i, review in enumerate(reviews, start=1)
     )
+    synthesis_prompt = PromptTemplate(
+        template=(
+            "You are synthesizing independent reviews of {paper_count} research papers. "
+            "Each labeled block is a distinct paper and its analysis. Do not treat the blocks as one paper. "
+            "Produce a grounded cross-paper summary, key findings, contributions, and comparative_review. "
+            "Attribute findings to the relevant paper when they differ. Compare objectives, methods, results, "
+            "contributions, limitations, and future directions only when the supplied reviews support it. "
+            "Do not add generic claims or outside knowledge. comparative_review must be meaningful.\n\n"
+            "INDIVIDUAL REVIEWS:\n{reviews}"
+        ),
+        input_variables=["paper_count", "reviews"],
+    )
+    synthesis_chain = synthesis_prompt | llm.with_structured_output(LiteratureReviewSynthesis)
+    synthesis_result = await synthesis_chain.ainvoke({
+        "paper_count": len(reviews),
+        "reviews": synthesis_input,
+    })
+    synthesis = synthesis_result.model_dump()
 
-    return output
+    return {
+        **synthesis,
+        "paper_reviews": reviews,
+    }

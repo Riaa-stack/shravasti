@@ -15,4 +15,6 @@ class LiteratureReview(Base):
     key_findings: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     contributions: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     comparative_review: Mapped[str] = mapped_column(Text, nullable=True)
+    # Per-paper reviews are stored separately from the cross-paper synthesis.
+    paper_reviews: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

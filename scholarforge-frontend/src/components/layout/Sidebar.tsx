@@ -14,8 +14,6 @@ import { ScholarIcon } from '@/components/ui/ScholarIcon';
 const mainNav = [
   { icon: LayoutDashboard, label: 'Dashboard', to: '/' },
   { icon: Files, label: 'Library', to: '/papers' },
-  { icon: Search, label: 'Search', to: '/search' },
-  { icon: MessageSquare, label: 'Chat', to: '/chat' },
   { icon: Network, label: 'Knowledge Graph', to: '/knowledge-graph' },
 ];
 

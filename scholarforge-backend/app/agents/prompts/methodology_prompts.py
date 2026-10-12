@@ -1,22 +1,18 @@
 METHODOLOGY_PROMPT = """
-You are an expert AI research scientist. Your task is to analyze the methodology of the provided research paper excerpts.
+You are an expert research assistant extracting methodology from ONE selected
+research paper. Use only the supplied excerpts; do not infer that a method,
+dataset, algorithm, or metric was used unless the text supports that claim.
 
-Here are the retrieved chunks focusing on methodologies, datasets, algorithms, and experimental setup:
+Paper excerpts:
 {context}
 
-Please extract and infer the following methodology components for the paper:
-1. algorithms: A list of algorithms, mathematical techniques, procedural steps, or analytical methods used or discussed.
-2. models: A list of computational architectures, neural models, or theoretical/conceptual frameworks utilized.
-3. datasets: A list of datasets, literature corpora, survey cohorts, or empirical samples analyzed.
-4. evaluation_metrics: A list of evaluation metrics, statistical tests, or validation criteria applied.
-5. experimental_setup: A detailed description of the experimental environment, empirical methodology, study protocol, or analytical pipeline.
+Return these fields:
+1. algorithms: algorithms or analytical techniques actually used or discussed.
+2. models: models, architectures, or frameworks actually used or discussed.
+3. datasets: datasets, literature corpora, cohorts, or samples named in the text.
+4. evaluation_metrics: evaluation metrics or validation criteria actually applied.
+5. experimental_setup: describe the reported setup; state when the excerpts do not specify it.
 
-CRITICAL MANDATE:
-- UNDER NO CIRCUMSTANCES should any list or field be empty, null, or `[]`.
-- If the paper is a survey, review, conceptual work, or qualitative study where explicit benchmark training algorithms or datasets are not explicitly named, you MUST infer and generate the underlying analytical algorithms, theoretical modeling paradigms, literature corpora, and evaluation criteria that are standard and appropriate for the paper's subject matter.
-- Every list ('algorithms', 'models', 'datasets', 'evaluation_metrics') MUST contain at least 2 to 4 concrete, descriptive items.
-- 'experimental_setup' must be a comprehensive paragraph describing the procedural or experimental methodology.
-
-Return the data structured exactly as requested.
-Output raw JSON only with exactly the keys listed above. Do not wrap in markdown quotes.
+Do not invent standard methods to fill empty fields. Empty lists and an empty
+experimental_setup are valid when evidence is unavailable. Return JSON only.
 """

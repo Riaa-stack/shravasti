@@ -19,43 +19,33 @@ class IdeaOutput(BaseModel):
     research_topics: list[str] = Field(description="A list of general research topics with rationales")
 
 
-def _ensure_non_empty_ideas(data: dict) -> dict:
-    if not data.get("project_ideas"):
-        data["project_ideas"] = [
-            "Auditing Algorithmic Transparency: Implement an automated dashboard that measures compliance and fairness in decision-making pipelines.",
-            "Human-in-the-Loop Decision Copilot: Develop an interactive interface allowing domain practitioners to inspect and override model recommendations."
-        ]
-    if not data.get("thesis_suggestions"):
-        data["thesis_suggestions"] = [
-            "Causal Modeling for Enterprise AI: Investigating the long-term unintended organizational effects of automated algorithms under distribution shifts.",
-            "Ethical Alignment & Employee Trust in Automated Systems: A mixed-methods empirical study examining behavioral and psychological impacts."
-        ]
-    if not data.get("publication_ideas"):
-        data["publication_ideas"] = [
-            "Benchmarking Organizational AI Readiness: A systematic empirical survey across multi-sector enterprises.",
-            "De-biasing Recruitment and Evaluation Workflows: Comparative evaluation of contemporary algorithmic mitigation techniques."
-        ]
-    if not data.get("startup_opportunities"):
-        data["startup_opportunities"] = [
-            "AI Governance & Compliance Platform: A SaaS product enabling enterprises to conduct algorithmic audits and maintain regulatory audit trails.",
-            "FairTalent AI: An intelligent assistive platform designed with built-in fairness checks and unbiased candidate evaluation."
-        ]
-    if not data.get("research_topics"):
-        data["research_topics"] = [
-            "Emergent socio-technical dynamics between human workers and autonomous AI systems.",
-            "Interpretable representations for high-stakes decisions under small and noisy data constraints."
-        ]
+def _normalize_ideas(data: dict) -> dict:
+    """Normalize result lists without substituting unrelated canned ideas."""
+    for field in ("project_ideas", "thesis_suggestions", "publication_ideas", "startup_opportunities", "research_topics"):
+        value = data.get(field)
+        data[field] = value if isinstance(value, list) else []
     return data
 
 
 async def run_idea_generation(state: ResearchState) -> dict:
     logger.info(f"Running Idea Generator Agent for papers {state['paper_ids']}")
 
-    chunks = retrieve_chunks(state["user_id"], state["paper_ids"], n_results=20)
-    context = "\n\n".join([
-        f"--- Paper {c['metadata'].get('paper_id')} (Page {c['metadata'].get('page_number')}) ---\n{c['content']}"
-        for c in chunks
-    ])
+    paper_ids = [str(pid) for pid in state.get("paper_ids", [])]
+    if not paper_ids:
+        raise ValueError("Idea generation requires at least one selected paper.")
+    sections = []
+    for index, paper_id in enumerate(paper_ids, start=1):
+        paper_chunks = retrieve_chunks(state["user_id"], [paper_id], n_results=8)
+        if not paper_chunks:
+            raise ValueError(f"No indexed text is available for selected paper {paper_id}.")
+        sections.append(
+            f"\n{'=' * 24} PAPER {index} (ID: {paper_id}) {'=' * 24}\n" +
+            "\n\n".join(
+                f"Page {c.get('metadata', {}).get('page_number', 'Unknown')}:\n{c.get('content', '')}"
+                for c in paper_chunks if c.get("content")
+            )
+        )
+    context = "\n\n".join(sections)
 
     prompt = PromptTemplate(
         template=IDEA_PROMPT,
@@ -70,7 +60,7 @@ async def run_idea_generation(state: ResearchState) -> dict:
         result = await chain.ainvoke({"context": context})
         dumped = result.model_dump()
     except Exception as e:
-        logger.error(f"Idea LLM call failed: {e}")
-        dumped = {}
+        logger.exception("Idea LLM call failed")
+        raise RuntimeError(f"Idea generation failed: {e}") from e
 
-    return _ensure_non_empty_ideas(dumped)
+    return _normalize_ideas(dumped)

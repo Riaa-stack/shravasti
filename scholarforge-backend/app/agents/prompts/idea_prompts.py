@@ -11,9 +11,11 @@ Please generate the following ideas based on the findings, gaps, and trends:
 4. startup_opportunities: Commercial, industry, or venture opportunities solving practical problems using the research findings.
 5. research_topics: General research themes and exploratory directions to investigate further.
 
-CRITICAL MANDATE:
-- UNDER NO CIRCUMSTANCES should any list or field be empty, null, or `[]`.
-- Provide at least 2 to 4 detailed, actionable entries per category, each with a title and concrete rationale.
+GROUNDING REQUIREMENTS:
+- Base each suggestion on the supplied paper excerpts and clearly connect it to the paper's findings or limitations.
+- Do not claim that an idea is novel or feasible unless the excerpts support that claim.
+- If the excerpts are insufficient to support a category, return an empty list rather than inventing details.
+- Prefer distinct, actionable entries over generic filler.
 
 Return the data structured exactly as requested.
 Output raw JSON only with exactly the keys listed above. Do not wrap in markdown quotes.
