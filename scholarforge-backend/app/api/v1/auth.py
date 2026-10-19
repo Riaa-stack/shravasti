@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from app.api.deps import SessionDep, CurrentUser
 from app.core import security
 from app.core.config import settings
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.token import Token
 from app.schemas.user import UserCreate, UserResponse
 
@@ -18,6 +18,13 @@ router = APIRouter()
 @router.post("/register", response_model=UserResponse)
 async def register(session: SessionDep, user_in: UserCreate) -> Any:
     """Register a new user."""
+    # Disallow admin account registration
+    if user_in.role == UserRole.admin or (isinstance(user_in.role, str) and user_in.role.lower() == "admin"):
+        raise HTTPException(
+            status_code=400,
+            detail="Admin accounts cannot be registered. Only login is permitted for administrator accounts."
+        )
+
     stmt = select(User).where(User.email == user_in.email)
     result = await session.execute(stmt)
     if result.scalar_one_or_none():

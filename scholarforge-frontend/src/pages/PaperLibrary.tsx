@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { usePaperStore, type Paper } from '@/store/paperStore';
 import { apiClient } from '@/api/client';
-import { UploadCloud, FileText, CheckCircle2, AlertCircle, Clock, Trash2, Search as SearchIcon, CheckSquare, Square, RefreshCw } from 'lucide-react';
+import { UploadCloud, FileText, CheckCircle2, AlertCircle, Clock, Trash2, Search as SearchIcon, CheckSquare, Square, RefreshCw, AlertTriangle, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function PaperLibrary() {
@@ -192,18 +192,27 @@ export function PaperLibrary() {
         {filteredPapers.map((paper) => {
           const isSelected = selectedPaperIds.includes(paper.id);
           const authorText = formatAuthors(paper.authors);
+          const isRestricted = paper.is_flagged || paper.is_available_for_ai === false;
 
           return (
             <div 
               key={paper.id}
-              onClick={() => toggleSelection(paper.id)}
+              onClick={() => {
+                if (isRestricted) {
+                  toast.error(`"${paper.title || 'Paper'}" is restricted from AI analysis (${paper.flag_reason || 'disabled by administrator'}).`);
+                  return;
+                }
+                toggleSelection(paper.id);
+              }}
               className={`relative rounded-xl border p-5 cursor-pointer transition-all duration-200 group bg-card/60 backdrop-blur-sm select-none
                 ${isSelected 
                   ? 'border-primary ring-2 ring-primary/40 shadow-lg bg-primary/[0.03]' 
-                  : 'border-border/50 hover:border-primary/50 hover:-translate-y-0.5'}`}
+                  : isRestricted
+                    ? 'border-rose-500/30 bg-rose-500/[0.02] opacity-90'
+                    : 'border-border/50 hover:border-primary/50 hover:-translate-y-0.5'}`}
             >
               <div className="flex justify-between items-start mb-3 gap-2">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${
                     isSelected ? 'bg-primary border-primary text-primary-foreground' : 'border-border bg-background'
                   }`}>
@@ -213,6 +222,18 @@ export function PaperLibrary() {
                     {getStatusIcon(paper.status)}
                     <span className="capitalize">{paper.status}</span>
                   </div>
+                  {paper.is_flagged && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-500 border border-rose-500/20 text-[10px] font-semibold" title={paper.flag_reason || 'Flagged as harmful'}>
+                      <AlertTriangle className="w-3 h-3" />
+                      Harm Flagged
+                    </span>
+                  )}
+                  {paper.is_available_for_ai === false && !paper.is_flagged && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[10px] font-semibold" title="AI analysis disabled">
+                      <ShieldAlert className="w-3 h-3" />
+                      AI Disabled
+                    </span>
+                  )}
                 </div>
 
                 <button 

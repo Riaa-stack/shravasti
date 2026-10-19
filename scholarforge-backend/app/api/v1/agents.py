@@ -128,6 +128,14 @@ async def verify_papers_exist(
             detail="One or more papers not found or do not belong to user."
         )
 
+    for paper in papers:
+        if paper.is_flagged or not paper.is_available_for_ai:
+            reason = paper.flag_reason or ("flagged as harmful or policy violation" if paper.is_flagged else "disabled for AI analysis by administrator")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Paper '{paper.title or paper.id}' is not available for AI analysis: {reason}."
+            )
+
     return papers
 
 

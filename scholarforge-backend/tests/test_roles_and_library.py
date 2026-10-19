@@ -7,7 +7,7 @@ from app.models.literature_review import LiteratureReview
 
 @pytest.mark.asyncio
 async def test_all_user_roles(client: AsyncClient):
-    roles = ["student", "researcher", "professor", "reviewer", "admin", "guest"]
+    roles = ["student", "researcher", "professor", "reviewer", "guest"]
     for role in roles:
         email = f"{role}@example.com"
         reg_res = await client.post(
@@ -47,6 +47,19 @@ async def test_all_user_roles(client: AsyncClient):
         me_data = me_res.json()
         assert me_data["role"] == role
         assert me_data["name"] == f"Dr. {role.capitalize()}"
+
+    # Verify admin signup is prohibited (only login allowed for admin)
+    admin_reg = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "Admin Test",
+            "email": "admin_test_reg@example.com",
+            "password": "SecurePassword123!",
+            "role": "admin"
+        }
+    )
+    assert admin_reg.status_code == 400
+    assert "Admin accounts cannot be registered" in admin_reg.json()["detail"]
 
 @pytest.mark.asyncio
 async def test_paper_library_and_keyword_search(client: AsyncClient, db_session):
@@ -190,7 +203,11 @@ async def test_agent_result_caching_and_batch_consistency(client: AsyncClient, d
         summary="Comprehensive comparative summary of Alpha and Beta.",
         key_findings=["Alpha achieves 95%", "Beta improves speed by 2x"],
         contributions=["New architecture", "Novel benchmark"],
-        comparative_review="Alpha focuses on accuracy while Beta prioritizes latency."
+        comparative_review="Alpha focuses on accuracy while Beta prioritizes latency.",
+        paper_reviews=[
+            {"paper_id": str(pid1), "title": "Paper Alpha", "summary": "Alpha summary"},
+            {"paper_id": str(pid2), "title": "Paper Beta", "summary": "Beta summary"}
+        ]
     )
     db_session.add_all([p1, p2, lr])
     await db_session.commit()
@@ -212,3 +229,102 @@ async def test_agent_result_caching_and_batch_consistency(client: AsyncClient, d
         headers=headers
     )
     assert single_lr.status_code == 404
+
+@pytest.mark.asyncio
+async def test_admin_paper_controls_and_moderation(client: AsyncClient, db_session):
+    from app.models.user import User, UserRole
+    from app.core.security import get_password_hash
+
+    # Create admin user directly in DB (simulating seeded admin)
+    admin_id = uuid.uuid4()
+    admin_user = User(
+        id=admin_id,
+        name="Admin Boss",
+        email="admin_direct@test.com",
+        password_hash=get_password_hash("AdminPass123!"),
+        role=UserRole.admin,
+        is_active=True
+    )
+
+    # Create normal researcher user
+    student_id = uuid.uuid4()
+    student_user = User(
+        id=student_id,
+        name="Student Sam",
+        email="student_sam@test.com",
+        password_hash=get_password_hash("StudentPass123!"),
+        role=UserRole.student,
+        is_active=True
+    )
+
+    paper_id = uuid.uuid4()
+    paper = Paper(
+        id=paper_id,
+        user_id=student_id,
+        title="Harmful Chemical Syntheses",
+        authors=["Danger Author"],
+        file_path="/tmp/harmful.pdf",
+        status=PaperStatus.processed,
+        is_flagged=False,
+        is_available_for_ai=True
+    )
+
+    db_session.add_all([admin_user, student_user, paper])
+    await db_session.commit()
+
+    # Login as admin
+    admin_login = await client.post("/api/v1/auth/login", data={"username": "admin_direct@test.com", "password": "AdminPass123!"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # 1. Admin views all uploaded papers across any user, along with author name, email and role
+    all_papers_res = await client.get("/api/v1/papers/admin/all", headers=admin_headers)
+    assert all_papers_res.status_code == 200
+    all_papers = all_papers_res.json()
+    assert len(all_papers) >= 1
+    found = [p for p in all_papers if p["id"] == str(paper_id)]
+    assert len(found) == 1
+    assert found[0]["user_name"] == "Student Sam"
+    assert found[0]["user_role"] == "student"
+    assert found[0]["user_email"] == "student_sam@test.com"
+
+    # 2. Admin flags paper as harmful / policy violation
+    flag_res = await client.patch(
+        f"/api/v1/papers/admin/{paper_id}/flag",
+        json={"is_flagged": True, "flag_reason": "Harmful bio-chemical contents", "is_available_for_ai": False},
+        headers=admin_headers
+    )
+    assert flag_res.status_code == 200
+    flagged_data = flag_res.json()
+    assert flagged_data["is_flagged"] is True
+    assert flagged_data["is_available_for_ai"] is False
+    assert flagged_data["flag_reason"] == "Harmful bio-chemical contents"
+
+    # 3. Verify AI analysis is blocked on flagged / AI-disabled paper
+    student_login = await client.post("/api/v1/auth/login", data={"username": "student_sam@test.com", "password": "StudentPass123!"})
+    student_token = student_login.json()["access_token"]
+    student_headers = {"Authorization": f"Bearer {student_token}"}
+
+    blocked_ai = await client.post(
+        "/api/v1/agents/literature-review",
+        json={"paper_ids": [str(paper_id)], "parameters": {}},
+        headers=student_headers
+    )
+    assert blocked_ai.status_code == 400
+    assert "not available for AI analysis" in blocked_ai.json()["detail"]
+
+    # 4. Admin deletes paper
+    del_paper_res = await client.delete(f"/api/v1/papers/{paper_id}", headers=admin_headers)
+    assert del_paper_res.status_code == 200
+
+    # Verify paper is deleted
+    p_check = await client.get(f"/api/v1/papers/{paper_id}", headers=admin_headers)
+    assert p_check.status_code == 404
+
+    # 5. Admin deletes user
+    del_user_res = await client.delete(f"/api/v1/users/{student_id}", headers=admin_headers)
+    assert del_user_res.status_code == 200
+
+    u_check = await client.get(f"/api/v1/users/{student_id}", headers=admin_headers)
+    assert u_check.status_code == 404

@@ -51,6 +51,20 @@ async def websocket_chat_endpoint(
                 history = history_result.scalars().all()
                 chat_history = [{"role": msg.role.value, "content": msg.content} for msg in history]
                 
+                # Check if any associated paper is flagged or restricted from AI analysis
+                if chat_session.paper_ids:
+                    from app.models.paper import Paper
+                    try:
+                        p_res = await session.execute(select(Paper).where(Paper.id.in_([uuid.UUID(str(pid)) for pid in chat_session.paper_ids])))
+                        papers = p_res.scalars().all()
+                        restricted = [p for p in papers if p.is_flagged or not p.is_available_for_ai]
+                        if restricted:
+                            reason = restricted[0].flag_reason or ("flagged as harmful or restricted" if restricted[0].is_flagged else "disabled for AI analysis by administrator")
+                            await websocket.send_json({"type": "error", "message": f"Paper '{restricted[0].title or restricted[0].id}' is not available for AI analysis: {reason}."})
+                            continue
+                    except Exception:
+                        pass
+                
                 # Save User message
                 user_msg = ChatMessage(session_id=chat_session.id, role=ChatRole.user, content=query)
                 session.add(user_msg)

@@ -2,10 +2,8 @@ import { NavLink } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   Files, 
-  Search, 
   Settings, 
   LogOut,
-  MessageSquare,
   Network
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';

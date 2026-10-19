@@ -14,6 +14,13 @@ export interface Paper {
   upload_date?: string;
   created_at?: string;
   difficulty_level?: 'easy' | 'medium' | 'hard';
+  is_flagged?: boolean;
+  flag_reason?: string | null;
+  is_available_for_ai?: boolean;
+  user_id?: string;
+  user_name?: string;
+  user_email?: string;
+  user_role?: string;
 }
 
 interface PaperState {

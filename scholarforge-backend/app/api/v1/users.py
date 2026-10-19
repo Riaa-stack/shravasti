@@ -85,6 +85,16 @@ async def delete_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
+    import os
+    import shutil
+    from app.core.config import settings
+    user_storage = os.path.join(settings.PAPERS_STORAGE_DIR, str(user_id))
+    if os.path.exists(user_storage):
+        try:
+            shutil.rmtree(user_storage)
+        except Exception:
+            pass
+
     await session.delete(user)
     await session.commit()
-    return {"status": "ok"}
+    return {"status": "ok", "message": "User deleted successfully"}

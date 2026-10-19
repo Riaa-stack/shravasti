@@ -1,10 +1,14 @@
 import enum
 import uuid
 from datetime import datetime
-from sqlalchemy import String, DateTime, Enum, ForeignKey, Integer, Text
+from typing import TYPE_CHECKING
+from sqlalchemy import String, DateTime, Enum, ForeignKey, Integer, Text, Boolean
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 class PaperStatus(str, enum.Enum):
     uploaded = "uploaded"
@@ -33,7 +37,11 @@ class Paper(Base):
     file_path: Mapped[str] = mapped_column(String(1000), nullable=False)
     page_count: Mapped[int] = mapped_column(Integer, nullable=True)
     status: Mapped[PaperStatus] = mapped_column(Enum(PaperStatus), default=PaperStatus.uploaded, index=True, nullable=False)
+    is_flagged: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    flag_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    is_available_for_ai: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
+    user: Mapped["User"] = relationship("User", lazy="selectin")
     chunks: Mapped[list["PaperChunk"]] = relationship("PaperChunk", back_populates="paper", cascade="all, delete-orphan")
